@@ -5,6 +5,7 @@ import requests
 import json
 import ast
 import operator
+from .visualization_tools import get_visualization_tools
 from app.config import TAVILY_API_KEY, SERP_API_KEY, OPENWEATHER_API_KEY, OPENWEATHER_BASE_URL
 
 class CalculatorInput(BaseModel):
@@ -144,8 +145,13 @@ class WeatherTool(BaseTool):
 
 def get_tools():
     """Return list of available tools"""
-    return [
+    base_tools = [
         CalculatorTool(),
         WebSearchTool(),
         WeatherTool()
     ]
+    
+    # Add visualization tools
+    viz_tools = get_visualization_tools()
+    
+    return base_tools + viz_tools

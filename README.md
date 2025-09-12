@@ -1,27 +1,211 @@
-# AI Agent with LangChain + FastAPI + Ollama
+# 🤖 GenAI Data Visualization Dashboard
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00a393.svg)](https://fastapi.tiangolo.com/)
-[![LangChain](https://img.shields.io/badge/LangChain-0.1+-1C3C3C.svg)](https://langchain.com/)
-[![Ollama](https://img.shields.io/badge/Ollama-Latest-ff6b35.svg)](https://ollama.ai/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+An intelligent data visualization platform that combines the power of AI agents with interactive dashboards for seamless data exploration and analysis.
 
-A powerful AI Agent that integrates a local LLM (via Ollama) with external tools including web search, calculator, and weather APIs using LangChain and FastAPI.
+## 🌟 Features
 
-## 📋 Table of Contents
+### 🔄 Dual-Mode Interface
+- **🗣️ Natural Language Mode**: Type queries like "Create a scatter plot of age vs salary"
+- **🎛️ Manual Mode**: Point-and-click interface with advanced customization
 
-- [Features](#-features)
-- [Demo](#-demo)
-- [Prerequisites](#-prerequisites)
-- [Quick Start](#-quick-start)
-- [API Endpoints](#-api-endpoints)
-- [Environment Variables](#-environment-variables)
-- [Docker Deployment](#-docker-deployment)
-- [Available Tools](#-available-tools)
-- [Example Queries](#-example-queries)
-- [Troubleshooting](#-troubleshooting)
-- [Development](#-development)
-- [License](#-license)
+### 📊 Advanced Visualizations
+- **Histogram** - Distribution analysis with customizable bins
+- **Scatter Plot** - Correlation analysis with color and size encoding
+- **Box Plot** - Statistical summaries with grouping options
+- **Correlation Heatmap** - Relationship matrices for numeric data
+- **Bar Chart** - Categorical analysis with multiple aggregations
+- **Pie Chart** - Proportional analysis with top-N filtering
+
+### 🧠 AI-Powered Analysis
+- **LangChain Integration** - Sophisticated AI agent with tool calling
+- **Ollama Support** - Local LLM processing with Mistral model
+- **Smart Query Parsing** - Understands natural language patterns
+- **Intelligent Fallbacks** - Seamless mode switching for complex queries
+
+### ✨ Enhanced User Experience
+- **Real-time Processing** - Instant visualization generation
+- **Chart Downloads** - Export visualizations as PNG files
+- **Interactive Controls** - Dynamic parameter adjustment
+- **Professional UI** - Modern design with visual indicators
+
+## 🏗️ Architecture
+
+```
+GenAI Dashboard/
+├── 🖥️ Frontend (Streamlit)     # Interactive web interface
+├── 🔗 API Layer (FastAPI)      # RESTful API endpoints  
+├── 🤖 AI Agent (LangChain)     # Natural language processing
+├── 📊 Visualization Engine     # Chart generation tools
+├── 🧠 LLM Backend (Ollama)     # Local language model
+└── 🐳 Docker Support          # Containerized deployment
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.11+
+- [Ollama](https://ollama.ai) installed locally
+- Git
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/m-zayed5722/genai-dashboard.git
+   cd genai-dashboard
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Set up Ollama**
+   ```bash
+   # Install and start Ollama service
+   ollama serve
+   
+   # Pull the Mistral model
+   ollama pull mistral
+   ```
+
+4. **Start the application**
+   ```bash
+   # Start API server (Terminal 1)
+   python start_server.py
+   
+   # Start Streamlit dashboard (Terminal 2) 
+   python -m streamlit run frontend/streamlit_app.py --server.port 8501
+   ```
+
+5. **Open the dashboard**
+   - Dashboard: http://localhost:8501
+   - API Documentation: http://localhost:8002/docs
+
+## 💡 Usage Examples
+
+### Natural Language Queries
+```
+"Show me a histogram of sales"
+"Create a scatter plot of price vs rating colored by category"  
+"Plot correlation heatmap"
+"Box plot of salary by department"
+"Bar chart showing average revenue by region"
+```
+
+### Manual Mode
+1. Upload your CSV file
+2. Select visualization type from dropdown
+3. Choose columns and parameters
+4. Customize colors, grouping, and aggregations
+5. Download your visualization
+
+## 📁 Project Structure
+
+```
+genai-dashboard/
+├── 📱 app/
+│   ├── main_viz.py              # FastAPI application
+│   ├── agent.py                 # LangChain AI agent
+│   ├── models.py                # Pydantic data models
+│   └── tools/
+│       ├── visualization_tools.py # LangChain visualization tools
+│       └── tools.py             # Additional utility tools
+├── 🖥️ frontend/
+│   └── streamlit_app.py         # Streamlit dashboard
+├── ⚙️ backend/
+│   └── visualizations.py       # Core visualization engine
+├── 📊 uploads/                  # Dataset storage
+├── 🐳 docker-compose.yml       # Container orchestration
+├── 📋 requirements.txt         # Python dependencies
+└── 🚀 start_server.py          # Application launcher
+```
+
+## 🛠️ Technology Stack
+
+### Core Technologies
+- **FastAPI** - High-performance API framework
+- **Streamlit** - Interactive web applications
+- **LangChain** - AI agent orchestration
+- **Ollama** - Local LLM deployment
+
+### Visualization & Data
+- **Plotly** - Interactive visualizations
+- **Pandas** - Data manipulation
+- **NumPy** - Numerical computing
+- **Seaborn** - Statistical plotting
+- **Matplotlib** - Base plotting library
+
+### AI & ML
+- **Mistral** - Open-source language model
+- **Pydantic** - Data validation
+- **Python-multipart** - File upload handling
+
+## 📈 Advanced Features
+
+### Smart Query Processing
+- **Pattern Recognition**: Automatically detects visualization intent
+- **Column Matching**: Case-insensitive column name resolution
+- **Query Interpretation**: Visual feedback on parsed queries
+- **Error Recovery**: Graceful handling of ambiguous inputs
+
+### Professional Visualizations
+- **Interactive Charts**: Zoom, pan, and hover capabilities
+- **Customizable Themes**: Professional color schemes
+- **High-Quality Exports**: PNG downloads at publication quality
+- **Responsive Design**: Works on desktop and mobile
+
+### Data Analysis
+- **Automatic Type Detection**: Smart column classification
+- **Statistical Summaries**: Built-in data profiling
+- **Correlation Analysis**: Relationship discovery
+- **Missing Data Handling**: Robust data cleaning
+
+## 🐳 Docker Deployment
+
+```bash
+# Build and run with Docker Compose
+docker-compose up --build
+
+# Access the application
+# Dashboard: http://localhost:8501
+# API: http://localhost:8002
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **Ollama** - For local LLM deployment
+- **LangChain** - For AI agent orchestration  
+- **Streamlit** - For rapid dashboard development
+- **Plotly** - For interactive visualizations
+
+## 📞 Contact
+
+**Mohamed Zayed**
+- GitHub: [@m-zayed5722](https://github.com/m-zayed5722)
+- Email: mzayed5722@gmail.com
+
+## 🔗 Links
+
+- [Repository](https://github.com/m-zayed5722/genai-dashboard)
+- [Issues](https://github.com/m-zayed5722/genai-dashboard/issues)
+- [Documentation](https://github.com/m-zayed5722/genai-dashboard/wiki)
+
+---
+
+**Built with ❤️ for the data science community**
 
 ## 🎬 Demo
 

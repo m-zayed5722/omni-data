@@ -9,3 +9,16 @@ requests==2.31.0
 python-dotenv==1.0.0
 httpx==0.26.0
 tavily-python==0.3.3
+# Data Science & Visualization
+pandas==2.1.4
+numpy==1.25.2
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.17.0
+# File handling
+python-multipart==0.0.6
+aiofiles==23.2.1
+# Image processing
+Pillow==10.1.0
+# Streamlit frontend
+streamlit==1.28.1

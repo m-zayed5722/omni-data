@@ -180,3 +180,18 @@ pids/
 
 # Docker
 .dockerignore
+
+# GenAI Dashboard specific
+uploads/
+*.png
+*.jpg
+*.jpeg
+*.gif
+test_*.csv
+sample_*.csv
+debug_*.py
+final_*.py
+test_*.png
+
+# Streamlit
+.streamlit/
