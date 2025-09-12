@@ -1,6 +1,45 @@
 # AI Agent with LangChain + FastAPI + Ollama
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-00a393.svg)](https://fastapi.tiangolo.com/)
+[![LangChain](https://img.shields.io/badge/LangChain-0.1+-1C3C3C.svg)](https://langchain.com/)
+[![Ollama](https://img.shields.io/badge/Ollama-Latest-ff6b35.svg)](https://ollama.ai/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A powerful AI Agent that integrates a local LLM (via Ollama) with external tools including web search, calculator, and weather APIs using LangChain and FastAPI.
+
+## 📋 Table of Contents
+
+- [Features](#-features)
+- [Demo](#-demo)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [API Endpoints](#-api-endpoints)
+- [Environment Variables](#-environment-variables)
+- [Docker Deployment](#-docker-deployment)
+- [Available Tools](#-available-tools)
+- [Example Queries](#-example-queries)
+- [Troubleshooting](#-troubleshooting)
+- [Development](#-development)
+- [License](#-license)
+
+## 🎬 Demo
+
+The AI Agent can handle complex queries by reasoning about which tools to use:
+
+```json
+POST /ask
+{
+  "query": "What is 25 * 4 and what's the weather in London?"
+}
+
+Response:
+{
+  "answer": "25 * 4 equals 100. The current weather in London is 18°C with light rain.",
+  "tool_calls": ["calculator", "weather"],
+  "error": null
+}
+```
 
 ## Features
 
