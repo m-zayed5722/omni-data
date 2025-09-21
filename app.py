@@ -38,12 +38,6 @@ def load_css():
     text-align: center;
     margin-bottom: 2rem;
 }
-.upload-section {
-    border: 2px dashed #1f77b4;
-    padding: 2rem;
-    border-radius: 10px;
-    margin: 1rem 0;
-}
 .chat-message {
     padding: 1rem;
     margin: 0.5rem 0;
@@ -72,19 +66,6 @@ def load_css():
     padding: 1rem;
     border-radius: 5px;
     margin: 1rem 0;
-}
-.success-message {
-    background-color: #e6ffe6;
-    border-left: 4px solid #44ff44;
-    padding: 1rem;
-    border-radius: 5px;
-    margin: 1rem 0;
-}
-.sidebar-content {
-    background-color: #f8f9fa;
-    padding: 1rem;
-    border-radius: 10px;
-    margin: 0.5rem 0;
 }
 .template-button {
     width: 100%;
@@ -805,7 +786,6 @@ def make_api_request(endpoint: str, data: dict) -> dict:
 
 def upload_data():
     """Handle file upload with enhanced error handling"""
-    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
     st.subheader("📁 Upload Your Data")
     
     uploaded_file = st.file_uploader(
@@ -824,9 +804,9 @@ def upload_data():
             st.session_state.df = df
             
             # Show success message
-            st.markdown('<div class="success-message">✅ File uploaded successfully!</div>', unsafe_allow_html=True)
+            st.success("✅ File uploaded successfully!")
             
-            # Display basic info
+            # Display basic info in a compact way
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("Rows", f"{len(df):,}")
@@ -855,7 +835,6 @@ def upload_data():
             st.error(f"Error reading file: {str(e)}")
             return None
     
-    st.markdown('</div>', unsafe_allow_html=True)
     return None
 
 def render_query_templates():
@@ -1267,12 +1246,12 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
-        
         # File upload section
         df = upload_data()
         
         if df is not None:
+            st.markdown("---")
+            
             # Quick templates
             render_query_templates()
             
@@ -1281,12 +1260,10 @@ def main():
             # Query history
             render_query_history()
         
-        st.markdown('</div>', unsafe_allow_html=True)
-        
         # Footer
         st.markdown("---")
         st.markdown("**🚀 Omni-Data Dashboard**")
-        st.markdown("Powered by GenAI & LangChain")
+        st.markdown("*Enhanced Smart Parser with AI*")
     
     # Main content tabs
     if st.session_state.df is not None:
