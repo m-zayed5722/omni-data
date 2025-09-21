@@ -126,6 +126,19 @@ if 'query_history' not in st.session_state:
     st.session_state.query_history = []
 if 'current_query' not in st.session_state:
     st.session_state.current_query = ""
+if 'current_visualization' not in st.session_state:
+    st.session_state.current_visualization = None
+if 'refinement_options' not in st.session_state:
+    st.session_state.refinement_options = {
+        'trendline': False,
+        'log_scale_x': False,
+        'log_scale_y': False,
+        'color_by': None,
+        'size_by': None,
+        'filter_by': None,
+        'theme': 'plotly',
+        'show_grid': True
+    }
 
 # Enhanced Smart Parser Functions
 def levenshtein_distance(s1: str, s2: str) -> int:
@@ -396,6 +409,272 @@ def smart_parse_query(query: str, columns: List[str]) -> Dict[str, Any]:
     
     return result
 
+def parse_refinement_command(command: str, columns: List[str]) -> Dict[str, Any]:
+    """Parse natural language refinement commands"""
+    command_lower = command.lower()
+    refinements = {}
+    
+    # Trendline detection
+    if any(word in command_lower for word in ['trendline', 'trend line', 'regression', 'fit line']):
+        refinements['trendline'] = True
+    
+    # Log scale detection
+    if 'log scale' in command_lower or 'logarithmic' in command_lower:
+        if 'x' in command_lower or 'x-axis' in command_lower:
+            refinements['log_scale_x'] = True
+        elif 'y' in command_lower or 'y-axis' in command_lower:
+            refinements['log_scale_y'] = True
+        else:
+            refinements['log_scale_y'] = True  # Default to y-axis
+    
+    # Color by detection
+    color_patterns = [
+        r'color by (\w+)',
+        r'colour by (\w+)', 
+        r'group by color (\w+)',
+        r'categorize by (\w+)',
+        r'split by (\w+)'
+    ]
+    
+    for pattern in color_patterns:
+        match = re.search(pattern, command_lower)
+        if match:
+            potential_column = match.group(1)
+            # Find best matching column
+            matched_cols = find_best_column_match(potential_column, columns, threshold=0.4)
+            if matched_cols:
+                refinements['color_by'] = matched_cols[0]
+            break
+    
+    # Size by detection
+    size_patterns = [
+        r'size by (\w+)',
+        r'scale by (\w+)',
+        r'bubble size (\w+)'
+    ]
+    
+    for pattern in size_patterns:
+        match = re.search(pattern, command_lower)
+        if match:
+            potential_column = match.group(1)
+            matched_cols = find_best_column_match(potential_column, columns, threshold=0.4)
+            if matched_cols:
+                refinements['size_by'] = matched_cols[0]
+            break
+    
+    # Theme detection
+    if any(word in command_lower for word in ['dark theme', 'dark mode']):
+        refinements['theme'] = 'plotly_dark'
+    elif any(word in command_lower for word in ['white theme', 'light mode']):
+        refinements['theme'] = 'plotly_white'
+    
+    # Grid detection
+    if any(word in command_lower for word in ['remove grid', 'hide grid', 'no grid']):
+        refinements['show_grid'] = False
+    elif any(word in command_lower for word in ['show grid', 'add grid', 'with grid']):
+        refinements['show_grid'] = True
+    
+    return refinements
+
+def apply_visualization_refinements(fig, refinements: Dict[str, Any], df: pd.DataFrame, 
+                                  chart_type: str, x_col: str = None, y_col: str = None):
+    """Apply refinements to a plotly figure"""
+    try:
+        # Apply log scales
+        if refinements.get('log_scale_x', False) and x_col:
+            fig.update_xaxes(type="log", title=f"{x_col} (log scale)")
+        
+        if refinements.get('log_scale_y', False) and y_col:
+            fig.update_yaxes(type="log", title=f"{y_col} (log scale)")
+        
+        # Apply trendline (for scatter plots)
+        if refinements.get('trendline', False) and chart_type == 'scatter' and x_col and y_col:
+            # Add trendline using numpy polyfit
+            x_data = df[x_col].dropna()
+            y_data = df[y_col].dropna()
+            
+            if len(x_data) > 1 and len(y_data) > 1:
+                # Ensure same length
+                min_len = min(len(x_data), len(y_data))
+                x_data = x_data.iloc[:min_len]
+                y_data = y_data.iloc[:min_len]
+                
+                # Calculate trendline
+                z = np.polyfit(x_data, y_data, 1)
+                p = np.poly1d(z)
+                
+                # Add trendline to figure
+                fig.add_scatter(x=x_data, y=p(x_data), 
+                              mode='lines', name='Trendline',
+                              line=dict(color='red', dash='dash'))
+        
+        # Apply theme
+        if refinements.get('theme'):
+            fig.update_layout(template=refinements['theme'])
+        
+        # Apply grid settings
+        if not refinements.get('show_grid', True):
+            fig.update_xaxes(showgrid=False)
+            fig.update_yaxes(showgrid=False)
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error applying refinements: {str(e)}")
+        return fig
+
+def render_refinement_controls(chart_type: str, columns: List[str]):
+    """Render interactive refinement controls"""
+    if st.session_state.current_visualization is None:
+        return
+    
+    # Show current active refinements
+    active_refinements = [k.replace('_', ' ').title() for k, v in st.session_state.refinement_options.items() if v and v != 'plotly']
+    if active_refinements:
+        st.info(f"🎨 **Active refinements:** {', '.join(active_refinements)}")
+    
+    st.markdown("### 🎨 Refine Your Visualization")
+    
+    # Create tabs for different types of refinements
+    tab1, tab2, tab3 = st.tabs(["📊 Chart Options", "🎭 Style & Theme", "💬 Natural Language"])
+    
+    with tab1:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Chart Enhancements**")
+            
+            # Trendline (for scatter plots)
+            if chart_type in ['scatter']:
+                if st.button("➕ Add Trendline", key="add_trendline"):
+                    st.session_state.refinement_options['trendline'] = True
+                    st.rerun()
+                
+                if st.button("➖ Remove Trendline", key="remove_trendline"):
+                    st.session_state.refinement_options['trendline'] = False
+                    st.rerun()
+            
+            # Log scale options
+            st.markdown("**Scale Options**")
+            if st.button("📈 Y-axis Log Scale", key="log_y"):
+                st.session_state.refinement_options['log_scale_y'] = not st.session_state.refinement_options['log_scale_y']
+                st.rerun()
+                
+            if st.button("📊 X-axis Log Scale", key="log_x"):
+                st.session_state.refinement_options['log_scale_x'] = not st.session_state.refinement_options['log_scale_x']
+                st.rerun()
+        
+        with col2:
+            st.markdown("**Grouping & Colors**")
+            
+            # Color by options
+            categorical_cols = [col for col in columns if st.session_state.df[col].dtype == 'object']
+            
+            color_by = st.selectbox(
+                "Color by:",
+                [None] + categorical_cols,
+                index=0 if st.session_state.refinement_options['color_by'] is None 
+                else categorical_cols.index(st.session_state.refinement_options['color_by']) + 1 
+                if st.session_state.refinement_options['color_by'] in categorical_cols else 0,
+                key="color_by_select"
+            )
+            
+            if st.button("🎨 Apply Color Grouping", key="apply_color"):
+                st.session_state.refinement_options['color_by'] = color_by
+                st.rerun()
+            
+            # Size by options (for scatter plots)
+            if chart_type == 'scatter':
+                numeric_cols = [col for col in columns if st.session_state.df[col].dtype in ['int64', 'float64']]
+                
+                size_by = st.selectbox(
+                    "Size by:",
+                    [None] + numeric_cols,
+                    key="size_by_select"
+                )
+                
+                if st.button("📏 Apply Size Mapping", key="apply_size"):
+                    st.session_state.refinement_options['size_by'] = size_by
+                    st.rerun()
+    
+    with tab2:
+        st.markdown("**Theme & Style**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            theme_options = ['plotly', 'plotly_white', 'plotly_dark', 'ggplot2', 'seaborn']
+            
+            current_theme_idx = 0
+            if st.session_state.refinement_options['theme'] in theme_options:
+                current_theme_idx = theme_options.index(st.session_state.refinement_options['theme'])
+            
+            theme = st.selectbox(
+                "Theme:",
+                theme_options,
+                index=current_theme_idx,
+                key="theme_select"
+            )
+            
+            if st.button("🎭 Apply Theme", key="apply_theme"):
+                st.session_state.refinement_options['theme'] = theme
+                st.rerun()
+        
+        with col2:
+            # Grid toggle
+            if st.button("🔲 Toggle Grid", key="toggle_grid"):
+                st.session_state.refinement_options['show_grid'] = not st.session_state.refinement_options['show_grid']
+                st.rerun()
+            
+            # Reset all refinements
+            if st.button("🔄 Reset All Refinements", key="reset_refinements"):
+                st.session_state.refinement_options = {
+                    'trendline': False,
+                    'log_scale_x': False,
+                    'log_scale_y': False,
+                    'color_by': None,
+                    'size_by': None,
+                    'filter_by': None,
+                    'theme': 'plotly',
+                    'show_grid': True
+                }
+                st.rerun()
+            
+            # Refresh visualization with current refinements
+            if st.button("🔄 Update Visualization", key="update_viz", type="primary"):
+                # Recreate visualization with current refinements
+                if st.session_state.current_visualization:
+                    result = create_standalone_visualization(st.session_state.current_visualization)
+                    if "visualization" in result and result["visualization"]["type"] == "plotly":
+                        fig = go.Figure(result["visualization"]["figure"])
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.success("✅ Visualization updated with refinements!")
+                    else:
+                        st.error("Could not update visualization")
+    
+    with tab3:
+        st.markdown("**Natural Language Refinements**")
+        st.write("Tell me how you'd like to enhance your visualization:")
+        
+        with st.form("refinement_form"):
+            refinement_query = st.text_area(
+                "Refinement request:",
+                placeholder="e.g., 'Add a trendline and color by region' or 'Switch y-axis to log scale'",
+                height=60
+            )
+            
+            if st.form_submit_button("🪄 Apply Refinements"):
+                if refinement_query.strip():
+                    # Parse the refinement command
+                    refinements = parse_refinement_command(refinement_query, columns)
+                    
+                    # Apply refinements to session state
+                    for key, value in refinements.items():
+                        st.session_state.refinement_options[key] = value
+                    
+                    st.success(f"Applied refinements: {', '.join(refinements.keys())}")
+                    st.rerun()
+
 def create_standalone_visualization(data: dict) -> dict:
     """Create visualizations in standalone mode without backend API"""
     try:
@@ -408,28 +687,59 @@ def create_standalone_visualization(data: dict) -> dict:
         
         df = pd.DataFrame(df_data)
         
-        # Create visualization based on chart type
+        # Store current visualization context
+        st.session_state.current_visualization = {
+            'chart_type': chart_type,
+            'columns': columns,
+            'data': df_data
+        }
+        
+        # Get refinement options
+        refinements = st.session_state.refinement_options
+        
+        # Create base visualization
+        fig = None
+        x_col = columns[0] if len(columns) > 0 else None
+        y_col = columns[1] if len(columns) > 1 else None
+        
+        # Create visualization based on chart type with refinements
         if chart_type == 'scatter' and len(columns) >= 2:
-            fig = px.scatter(df, x=columns[0], y=columns[1], 
-                           title=f"Scatter Plot: {columns[0]} vs {columns[1]}")
+            color_col = refinements.get('color_by')
+            size_col = refinements.get('size_by')
+            
+            fig = px.scatter(df, x=x_col, y=y_col,
+                           color=color_col if color_col and color_col in df.columns else None,
+                           size=size_col if size_col and size_col in df.columns else None,
+                           title=f"Scatter Plot: {x_col} vs {y_col}")
+            
         elif chart_type == 'line' and len(columns) >= 2:
-            fig = px.line(df, x=columns[0], y=columns[1],
-                         title=f"Line Chart: {columns[1]} over {columns[0]}")
+            color_col = refinements.get('color_by')
+            fig = px.line(df, x=x_col, y=y_col,
+                         color=color_col if color_col and color_col in df.columns else None,
+                         title=f"Line Chart: {y_col} over {x_col}")
+                         
         elif chart_type == 'bar' and len(columns) >= 1:
             if len(columns) >= 2:
-                fig = px.bar(df, x=columns[0], y=columns[1],
-                           title=f"Bar Chart: {columns[1]} by {columns[0]}")
+                color_col = refinements.get('color_by')
+                fig = px.bar(df, x=x_col, y=y_col,
+                           color=color_col if color_col and color_col in df.columns else None,
+                           title=f"Bar Chart: {y_col} by {x_col}")
             else:
-                value_counts = df[columns[0]].value_counts()
+                value_counts = df[x_col].value_counts()
                 fig = px.bar(x=value_counts.index, y=value_counts.values,
-                           title=f"Bar Chart: {columns[0]} Distribution")
+                           title=f"Bar Chart: {x_col} Distribution")
+                           
         elif chart_type == 'pie' and len(columns) >= 1:
-            value_counts = df[columns[0]].value_counts()
+            value_counts = df[x_col].value_counts()
             fig = px.pie(values=value_counts.values, names=value_counts.index,
-                        title=f"Pie Chart: {columns[0]} Distribution")
+                        title=f"Pie Chart: {x_col} Distribution")
+                        
         elif chart_type == 'histogram' and len(columns) >= 1:
-            fig = px.histogram(df, x=columns[0],
-                             title=f"Histogram: {columns[0]} Distribution")
+            color_col = refinements.get('color_by')
+            fig = px.histogram(df, x=x_col,
+                             color=color_col if color_col and color_col in df.columns else None,
+                             title=f"Histogram: {x_col} Distribution")
+                             
         elif chart_type == 'summary_stats':
             # Return summary statistics as a table
             numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -450,16 +760,18 @@ def create_standalone_visualization(data: dict) -> dict:
         else:
             # Default to basic bar chart
             if len(columns) >= 1:
-                value_counts = df[columns[0]].value_counts().head(10)
+                value_counts = df[x_col].value_counts().head(10)
                 fig = px.bar(x=value_counts.index, y=value_counts.values,
-                           title=f"Top 10 {columns[0]} Values")
+                           title=f"Top 10 {x_col} Values")
             else:
                 return {"error": "No suitable columns for visualization"}
         
-        # Convert plotly figure to dict
-        if 'fig' in locals():
+        # Apply refinements to the figure
+        if fig is not None:
+            fig = apply_visualization_refinements(fig, refinements, df, chart_type, x_col, y_col)
+            
             return {
-                "response": f"Created {chart_type} visualization using your data.",
+                "response": f"Created {chart_type} visualization with refinements applied.",
                 "visualization": {
                     "type": "plotly",
                     "figure": fig.to_dict()
@@ -467,7 +779,8 @@ def create_standalone_visualization(data: dict) -> dict:
                 "insights": [
                     f"Visualization type: {chart_type}",
                     f"Columns used: {', '.join(columns)}",
-                    f"Data points: {len(df)} rows"
+                    f"Data points: {len(df)} rows",
+                    f"Active refinements: {[k for k, v in refinements.items() if v]}"
                 ]
             }
         else:
@@ -698,6 +1011,14 @@ def chat_interface():
                             if viz_data["type"] == "plotly":
                                 fig = go.Figure(viz_data["figure"])
                                 st.plotly_chart(fig, use_container_width=True)
+                                
+                                # Add refinement controls after showing the visualization
+                                if st.session_state.current_visualization:
+                                    with st.expander("🎨 Refine This Visualization", expanded=False):
+                                        columns = list(st.session_state.df.columns)
+                                        chart_type = st.session_state.current_visualization['chart_type']
+                                        render_refinement_controls(chart_type, columns)
+                                        
                             elif viz_data["type"] == "matplotlib":
                                 img_data = base64.b64decode(viz_data["image"])
                                 img = Image.open(io.BytesIO(img_data))
@@ -783,6 +1104,12 @@ def direct_visualization():
                         if viz_data["type"] == "plotly":
                             fig = go.Figure(viz_data["figure"])
                             st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Add refinement controls after showing the visualization
+                            if st.session_state.current_visualization:
+                                with st.expander("🎨 Refine This Visualization", expanded=False):
+                                    render_refinement_controls(chart_type, columns)
+                                    
                         elif viz_data["type"] == "matplotlib":
                             img_data = base64.b64decode(viz_data["image"])
                             img = Image.open(io.BytesIO(img_data))
