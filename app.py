@@ -14,8 +14,9 @@ import seaborn as sns
 from typing import Dict, Any, Optional, List
 import re
 
-# Configuration - Update this for Streamlit Cloud deployment
-API_BASE_URL = "http://localhost:8002"  # Change to your deployed backend URL when deploying
+# Configuration - For Streamlit Cloud (frontend-only mode)
+API_BASE_URL = None  # Set to None for standalone mode without backend
+STANDALONE_MODE = True  # Enable standalone mode for Streamlit Cloud
 
 # Page config
 st.set_page_config(
@@ -395,8 +396,92 @@ def smart_parse_query(query: str, columns: List[str]) -> Dict[str, Any]:
     
     return result
 
+def create_standalone_visualization(data: dict) -> dict:
+    """Create visualizations in standalone mode without backend API"""
+    try:
+        chart_type = data.get('chart_type', 'bar')
+        columns = data.get('columns', [])
+        df_data = data.get('data', [])
+        
+        if not df_data or not columns:
+            return {"error": "No data or columns provided"}
+        
+        df = pd.DataFrame(df_data)
+        
+        # Create visualization based on chart type
+        if chart_type == 'scatter' and len(columns) >= 2:
+            fig = px.scatter(df, x=columns[0], y=columns[1], 
+                           title=f"Scatter Plot: {columns[0]} vs {columns[1]}")
+        elif chart_type == 'line' and len(columns) >= 2:
+            fig = px.line(df, x=columns[0], y=columns[1],
+                         title=f"Line Chart: {columns[1]} over {columns[0]}")
+        elif chart_type == 'bar' and len(columns) >= 1:
+            if len(columns) >= 2:
+                fig = px.bar(df, x=columns[0], y=columns[1],
+                           title=f"Bar Chart: {columns[1]} by {columns[0]}")
+            else:
+                value_counts = df[columns[0]].value_counts()
+                fig = px.bar(x=value_counts.index, y=value_counts.values,
+                           title=f"Bar Chart: {columns[0]} Distribution")
+        elif chart_type == 'pie' and len(columns) >= 1:
+            value_counts = df[columns[0]].value_counts()
+            fig = px.pie(values=value_counts.values, names=value_counts.index,
+                        title=f"Pie Chart: {columns[0]} Distribution")
+        elif chart_type == 'histogram' and len(columns) >= 1:
+            fig = px.histogram(df, x=columns[0],
+                             title=f"Histogram: {columns[0]} Distribution")
+        elif chart_type == 'summary_stats':
+            # Return summary statistics as a table
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            if numeric_cols:
+                summary = df[numeric_cols].describe()
+                return {
+                    "response": "Here's a statistical summary of your numeric data:",
+                    "visualization": {
+                        "type": "table",
+                        "data": summary.reset_index().to_dict('records')
+                    },
+                    "insights": [
+                        f"Dataset contains {len(df)} rows and {len(df.columns)} columns",
+                        f"Numeric columns analyzed: {', '.join(numeric_cols)}",
+                        f"Data types: {dict(df.dtypes)}"
+                    ]
+                }
+        else:
+            # Default to basic bar chart
+            if len(columns) >= 1:
+                value_counts = df[columns[0]].value_counts().head(10)
+                fig = px.bar(x=value_counts.index, y=value_counts.values,
+                           title=f"Top 10 {columns[0]} Values")
+            else:
+                return {"error": "No suitable columns for visualization"}
+        
+        # Convert plotly figure to dict
+        if 'fig' in locals():
+            return {
+                "response": f"Created {chart_type} visualization using your data.",
+                "visualization": {
+                    "type": "plotly",
+                    "figure": fig.to_dict()
+                },
+                "insights": [
+                    f"Visualization type: {chart_type}",
+                    f"Columns used: {', '.join(columns)}",
+                    f"Data points: {len(df)} rows"
+                ]
+            }
+        else:
+            return {"error": "Could not create visualization"}
+            
+    except Exception as e:
+        return {"error": f"Error creating visualization: {str(e)}"}
+
 def make_api_request(endpoint: str, data: dict) -> dict:
-    """Make API request with error handling"""
+    """Make API request with error handling - works in standalone mode for Streamlit Cloud"""
+    if STANDALONE_MODE or API_BASE_URL is None:
+        # Standalone mode - create basic visualizations without backend
+        return create_standalone_visualization(data)
+    
     try:
         response = requests.post(f"{API_BASE_URL}/{endpoint}", json=data, timeout=30)
         response.raise_for_status()
@@ -722,95 +807,136 @@ def direct_visualization():
     st.markdown('</div>', unsafe_allow_html=True)
 
 def ai_agent_interface():
-    """AI Agent interface for complex analysis"""
+    """AI Agent interface for complex analysis - Standalone mode"""
     st.markdown('<div class="viz-container">', unsafe_allow_html=True)
-    st.subheader("🤖 AI Agent Analysis")
+    st.subheader("🤖 Data Analysis")
     
     if st.session_state.df is None:
         st.warning("Please upload a dataset first.")
         st.markdown('</div>', unsafe_allow_html=True)
         return
     
-    st.write("Let the AI Agent perform comprehensive analysis of your data using advanced tools.")
+    if STANDALONE_MODE:
+        st.info("🔧 **Standalone Mode**: Basic analysis available. Deploy with backend for advanced AI features.")
     
     analysis_type = st.selectbox(
         "Analysis Type",
         [
             "Full Data Overview",
-            "Statistical Analysis",
+            "Statistical Analysis", 
             "Correlation Analysis",
-            "Outlier Detection",
-            "Pattern Discovery",
-            "Custom Query"
+            "Basic Insights"
         ]
     )
     
-    if analysis_type == "Custom Query":
-        custom_query = st.text_area(
-            "Enter your analysis request:",
-            placeholder="E.g., 'Find the top 5 customers by revenue and analyze their buying patterns'"
-        )
-    else:
-        custom_query = None
-    
     if st.button("🔍 Start Analysis", type="primary"):
-        with st.spinner("AI Agent is analyzing your data..."):
-            # Prepare agent request
-            agent_request = {
-                "task": analysis_type.lower().replace(" ", "_"),
-                "data": st.session_state.df.to_dict('records'),
-                "columns": list(st.session_state.df.columns)
-            }
-            
-            if custom_query:
-                agent_request["query"] = custom_query
-            
-            # Make API request to AI agent
-            result = make_api_request("agent/analyze", agent_request)
-            
-            if "error" not in result:
-                # Display agent response
-                if "analysis" in result:
-                    st.markdown("### 📊 Analysis Results")
-                    st.write(result["analysis"])
+        df = st.session_state.df
+        
+        with st.spinner("Analyzing your data..."):
+            if analysis_type == "Full Data Overview":
+                st.markdown("### 📊 Dataset Overview")
                 
-                # Display any visualizations
-                if "visualizations" in result:
-                    st.markdown("### 📈 Generated Visualizations")
-                    for i, viz in enumerate(result["visualizations"]):
-                        try:
-                            if viz["type"] == "plotly":
-                                fig = go.Figure(viz["figure"])
-                                st.plotly_chart(fig, use_container_width=True)
-                            elif viz["type"] == "matplotlib":
-                                img_data = base64.b64decode(viz["image"])
-                                img = Image.open(io.BytesIO(img_data))
-                                st.image(img, use_container_width=True)
-                        except Exception as e:
-                            st.error(f"Error displaying visualization {i+1}: {str(e)}")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Rows", f"{len(df):,}")
+                with col2:
+                    st.metric("Columns", f"{len(df.columns):,}")
+                with col3:
+                    st.metric("Numeric Cols", f"{len(df.select_dtypes(include=[np.number]).columns):,}")
+                with col4:
+                    st.metric("Text Cols", f"{len(df.select_dtypes(include=['object']).columns):,}")
                 
-                # Display insights
-                if "insights" in result and result["insights"]:
-                    st.markdown("### 💡 Key Insights")
-                    for insight in result["insights"]:
-                        st.write(f"• {insight}")
+                # Data types
+                st.markdown("### 📋 Column Information")
+                col_info = pd.DataFrame({
+                    'Column': df.columns,
+                    'Type': df.dtypes.astype(str),
+                    'Non-Null': df.count(),
+                    'Null %': ((df.isnull().sum() / len(df)) * 100).round(2)
+                })
+                st.dataframe(col_info, use_container_width=True)
                 
-                # Display recommendations
-                if "recommendations" in result and result["recommendations"]:
-                    st.markdown("### 🎯 Recommendations")
-                    for rec in result["recommendations"]:
-                        st.write(f"• {rec}")
-                        
-            else:
-                st.error(f"Analysis failed: {result.get('error', 'Unknown error')}")
+            elif analysis_type == "Statistical Analysis":
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    st.markdown("### 📈 Statistical Summary")
+                    st.dataframe(df[numeric_cols].describe(), use_container_width=True)
+                    
+                    # Create histogram for first numeric column
+                    if len(numeric_cols) > 0:
+                        fig = px.histogram(df, x=numeric_cols[0], 
+                                         title=f"Distribution of {numeric_cols[0]}")
+                        st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("No numeric columns found for statistical analysis.")
+                    
+            elif analysis_type == "Correlation Analysis":
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) >= 2:
+                    st.markdown("### � Correlation Matrix")
+                    corr_matrix = df[numeric_cols].corr()
+                    
+                    fig = px.imshow(corr_matrix, 
+                                  title="Correlation Heatmap",
+                                  color_continuous_scale="RdBu_r",
+                                  aspect="auto")
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Show highest correlations
+                    st.markdown("### 🔍 Strongest Correlations")
+                    corr_pairs = []
+                    for i in range(len(corr_matrix.columns)):
+                        for j in range(i+1, len(corr_matrix.columns)):
+                            corr_pairs.append({
+                                'Column 1': corr_matrix.columns[i],
+                                'Column 2': corr_matrix.columns[j],
+                                'Correlation': corr_matrix.iloc[i, j]
+                            })
+                    
+                    corr_df = pd.DataFrame(corr_pairs)
+                    corr_df = corr_df.reindex(corr_df.Correlation.abs().sort_values(ascending=False).index)
+                    st.dataframe(corr_df.head(10), use_container_width=True)
+                else:
+                    st.warning("Need at least 2 numeric columns for correlation analysis.")
+                    
+            elif analysis_type == "Basic Insights":
+                st.markdown("### 💡 Basic Data Insights")
+                
+                insights = []
+                insights.append(f"📊 Your dataset has {len(df):,} rows and {len(df.columns)} columns")
+                
+                # Missing data
+                missing_cols = df.columns[df.isnull().any()].tolist()
+                if missing_cols:
+                    insights.append(f"⚠️ {len(missing_cols)} columns have missing values: {', '.join(missing_cols[:3])}{'...' if len(missing_cols) > 3 else ''}")
+                else:
+                    insights.append("✅ No missing values detected")
+                
+                # Numeric insights
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                if numeric_cols:
+                    insights.append(f"🔢 {len(numeric_cols)} numeric columns available for analysis")
+                    
+                # Categorical insights  
+                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
+                if cat_cols:
+                    insights.append(f"📝 {len(cat_cols)} text/categorical columns found")
+                
+                for insight in insights:
+                    st.write(f"• {insight}")
     
     st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
     """Main application"""
     # Header
-    st.markdown('<h1 class="main-header">🎯 Omni-Data: GenAI Data Visualization Dashboard</h1>', unsafe_allow_html=True)
-    st.markdown("Transform your data into insights with AI-powered visualizations")
+    if STANDALONE_MODE:
+        st.markdown('<h1 class="main-header">🎯 Omni-Data: Smart Data Visualization Platform</h1>', unsafe_allow_html=True)
+        st.markdown("Transform your data into insights with AI-powered visualizations")
+        st.info("🚀 **Streamlit Cloud Edition** - Enhanced Smart Parser with standalone visualizations")
+    else:
+        st.markdown('<h1 class="main-header">🎯 Omni-Data: GenAI Data Visualization Dashboard</h1>', unsafe_allow_html=True)
+        st.markdown("Transform your data into insights with AI-powered visualizations")
     
     # Sidebar
     with st.sidebar:
