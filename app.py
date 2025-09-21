@@ -900,12 +900,10 @@ def render_query_history():
 
 def chat_interface():
     """Enhanced chat interface with smart parsing"""
-    st.markdown('<div class="viz-container">', unsafe_allow_html=True)
     st.subheader("🤖 AI Data Visualization Assistant")
     
     if st.session_state.df is None:
         st.warning("Please upload a dataset first to start creating visualizations.")
-        st.markdown('</div>', unsafe_allow_html=True)
         return
     
     # Use form to handle query submission properly
@@ -1015,17 +1013,13 @@ def chat_interface():
                             st.write(f"• {insight}")
                 else:
                     st.error(f"Failed to create visualization: {result.get('error', 'Unknown error')}")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def direct_visualization():
     """Direct visualization interface with enhanced options"""
-    st.markdown('<div class="viz-container">', unsafe_allow_html=True)
     st.subheader("🎯 Direct Visualization")
     
     if st.session_state.df is None:
         st.warning("Please upload a dataset first.")
-        st.markdown('</div>', unsafe_allow_html=True)
         return
     
     df = st.session_state.df
@@ -1109,17 +1103,13 @@ def direct_visualization():
                     st.error(f"Failed to create visualization: {result.get('error', 'Unknown error')}")
         else:
             st.warning("Please select at least one column.")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def ai_agent_interface():
     """AI Agent interface for complex analysis - Standalone mode"""
-    st.markdown('<div class="viz-container">', unsafe_allow_html=True)
     st.subheader("🤖 Data Analysis")
     
     if st.session_state.df is None:
         st.warning("Please upload a dataset first.")
-        st.markdown('</div>', unsafe_allow_html=True)
         return
     
     if STANDALONE_MODE:
@@ -1230,8 +1220,6 @@ def ai_agent_interface():
                 
                 for insight in insights:
                     st.write(f"• {insight}")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
     """Main application"""
