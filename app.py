@@ -1239,7 +1239,6 @@ def main():
     if STANDALONE_MODE:
         st.markdown('<h1 class="main-header">🎯 Omni-Data: Smart Data Visualization Platform</h1>', unsafe_allow_html=True)
         st.markdown("Transform your data into insights with AI-powered visualizations")
-        st.info("🚀 **Streamlit Cloud Edition** - Enhanced Smart Parser with standalone visualizations")
     else:
         st.markdown('<h1 class="main-header">🎯 Omni-Data: GenAI Data Visualization Dashboard</h1>', unsafe_allow_html=True)
         st.markdown("Transform your data into insights with AI-powered visualizations")
@@ -1249,13 +1248,9 @@ def main():
         # File upload section
         df = upload_data()
         
-        if df is not None:
-            st.markdown("---")
-            
+        if df is not None:            
             # Quick templates
             render_query_templates()
-            
-            st.markdown("---")
             
             # Query history
             render_query_history()
