@@ -1,4 +1,12 @@
-# 🤖 GenAI Data Visualization Dashboard
+# 🌟 Omni-Data: AI-Powered Data Visualization Platform
+
+**Transform your CSV data into insightful visualizations using AI and smart parsing - no coding required!**
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
+[![LangChain](https://img.shields.io/badge/LangChain-0.1+-yellow.svg)](https://langchain.com)
+[![License](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
 
 An intelligent data visualization platform that combines the power of AI agents with interactive dashboards for seamless data exploration and analysis.
 

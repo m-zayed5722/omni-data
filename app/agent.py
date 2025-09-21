@@ -20,11 +20,12 @@ class AIAgent:
             # Check if Ollama is running
             self._check_ollama_connection()
             
-            # Initialize Ollama LLM
+            # Initialize Ollama LLM with extended timeout for complex reasoning
             self.llm = Ollama(
                 model=OLLAMA_MODEL,
                 base_url=OLLAMA_BASE_URL,
-                temperature=0.1
+                temperature=0.1,
+                timeout=600  # 10 minutes timeout for Ollama requests
             )
             
             # Get tools
