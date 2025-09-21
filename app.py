@@ -907,7 +907,7 @@ def chat_interface():
         return
     
     # Use form to handle query submission properly
-    with st.form("chat_form", clear_on_submit=True):
+    with st.form("chat_form", clear_on_submit=False):
         # Query input
         query = st.text_area(
             "What would you like to visualize?",
@@ -919,10 +919,6 @@ def chat_interface():
         
         # Submit button
         submit_button = st.form_submit_button("🎨 Create Visualization", type="primary")
-        
-        # Clear query from session state after using it
-        if st.session_state.current_query:
-            st.session_state.current_query = ""
     
     if submit_button and query.strip():
         # Add to query history
@@ -1013,6 +1009,9 @@ def chat_interface():
                             st.write(f"• {insight}")
                 else:
                     st.error(f"Failed to create visualization: {result.get('error', 'Unknown error')}")
+        
+        # Clear the query after successful processing
+        st.session_state.current_query = ""
 
 def direct_visualization():
     """Direct visualization interface with enhanced options"""
