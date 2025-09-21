@@ -710,6 +710,31 @@ def create_standalone_visualization(data: dict) -> dict:
                 fig = px.bar(x=value_counts.index, y=value_counts.values,
                            title=f"Bar Chart: {x_col} Distribution")
                            
+        elif chart_type == 'grouped_bar' and len(columns) >= 2:
+            group_by = data.get('group_by')
+            if group_by and group_by in df.columns:
+                fig = px.bar(df, x=x_col, y=y_col, color=group_by,
+                           title=f"Grouped Bar Chart: {y_col} by {x_col}, grouped by {group_by}")
+            else:
+                # Fallback to regular bar chart
+                fig = px.bar(df, x=x_col, y=y_col,
+                           title=f"Bar Chart: {y_col} by {x_col}")
+                           
+        elif chart_type == 'timeseries' and len(columns) >= 2:
+            # Try to detect date columns
+            date_cols = [col for col in df.columns if df[col].dtype == 'object']
+            for col in date_cols:
+                try:
+                    df[col] = pd.to_datetime(df[col])
+                    break
+                except:
+                    continue
+            
+            color_col = refinements.get('color_by')
+            fig = px.line(df, x=x_col, y=y_col,
+                         color=color_col if color_col and color_col in df.columns else None,
+                         title=f"Time Series: {y_col} over {x_col}")
+                           
         elif chart_type == 'pie' and len(columns) >= 1:
             value_counts = df[x_col].value_counts()
             fig = px.pie(values=value_counts.values, names=value_counts.index,
@@ -720,6 +745,36 @@ def create_standalone_visualization(data: dict) -> dict:
             fig = px.histogram(df, x=x_col,
                              color=color_col if color_col and color_col in df.columns else None,
                              title=f"Histogram: {x_col} Distribution")
+                             
+        elif chart_type == 'heatmap':
+            # Create correlation heatmap for numeric columns
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            if len(numeric_cols) >= 2:
+                corr_matrix = df[numeric_cols].corr()
+                fig = px.imshow(corr_matrix,
+                              labels=dict(x="Variables", y="Variables", color="Correlation"),
+                              x=corr_matrix.columns,
+                              y=corr_matrix.columns,
+                              color_continuous_scale="RdBu_r",
+                              aspect="auto",
+                              title="Correlation Heatmap")
+                
+                # Add correlation values as text annotations
+                fig.update_traces(text=np.around(corr_matrix.values, decimals=2),
+                                texttemplate="%{text}", textfont_size=10)
+            else:
+                return {"error": "Heatmap requires at least 2 numeric columns for correlation analysis"}
+                
+        elif chart_type == 'box' and len(columns) >= 1:
+            if len(columns) >= 2:
+                # Box plot with grouping
+                color_col = refinements.get('color_by')
+                fig = px.box(df, x=x_col, y=y_col,
+                           color=color_col if color_col and color_col in df.columns else None,
+                           title=f"Box Plot: {y_col} by {x_col}")
+            else:
+                # Single variable box plot
+                fig = px.box(df, y=x_col, title=f"Box Plot: {x_col} Distribution")
                              
         elif chart_type == 'summary_stats':
             # Return summary statistics as a table
