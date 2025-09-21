@@ -13,6 +13,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from typing import Dict, Any, Optional, List
 import re
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.cluster import KMeans
+from sklearn.metrics import classification_report, mean_squared_error, r2_score, silhouette_score, confusion_matrix
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+import warnings
+warnings.filterwarnings('ignore')
 
 # Configuration - For Streamlit Cloud (frontend-only mode)
 API_BASE_URL = None  # Set to None for standalone mode without backend
@@ -1275,6 +1283,347 @@ def ai_agent_interface():
                 for insight in insights:
                     st.write(f"• {insight}")
 
+def ml_interface():
+    """ML interface for automated machine learning with data analysis"""
+    st.subheader("🧠 Machine Learning Assistant")
+    
+    if st.session_state.df is None:
+        st.warning("Please upload a dataset first.")
+        return
+    
+    df = st.session_state.df.copy()
+    
+    # Auto-detect column types
+    st.markdown("### 🔍 Data Analysis")
+    
+    # Column type detection
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    # Try to detect datetime columns
+    datetime_cols = []
+    for col in categorical_cols.copy():
+        try:
+            pd.to_datetime(df[col].head(10))
+            datetime_cols.append(col)
+            categorical_cols.remove(col)
+        except:
+            continue
+    
+    # Display column analysis
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("🔢 Numeric Columns", len(numeric_cols))
+        if numeric_cols:
+            with st.expander("View Numeric Columns"):
+                for col in numeric_cols:
+                    nulls = df[col].isnull().sum()
+                    st.write(f"**{col}**: {nulls} nulls" if nulls > 0 else f"**{col}**: complete")
+    
+    with col2:
+        st.metric("📝 Categorical Columns", len(categorical_cols))
+        if categorical_cols:
+            with st.expander("View Categorical Columns"):
+                for col in categorical_cols:
+                    unique_vals = df[col].nunique()
+                    st.write(f"**{col}**: {unique_vals} unique values")
+    
+    with col3:
+        st.metric("📅 DateTime Columns", len(datetime_cols))
+        if datetime_cols:
+            with st.expander("View DateTime Columns"):
+                for col in datetime_cols:
+                    st.write(f"**{col}**: detected as datetime")
+    
+    # ML Task Selection
+    st.markdown("### 🎯 ML Task Selection")
+    
+    if len(numeric_cols) == 0:
+        st.warning("No numeric columns found. ML tasks require at least one numeric column.")
+        return
+    
+    # Suggest ML tasks based on data characteristics
+    suggested_tasks = []
+    
+    # Check for potential target columns for supervised learning
+    potential_targets = []
+    for col in numeric_cols:
+        unique_vals = df[col].nunique()
+        if 2 <= unique_vals <= 10:  # Likely classification target
+            potential_targets.append((col, "Classification"))
+        elif unique_vals > 10:  # Likely regression target
+            potential_targets.append((col, "Regression"))
+    
+    for col in categorical_cols:
+        unique_vals = df[col].nunique()
+        if 2 <= unique_vals <= 20:  # Good for classification
+            potential_targets.append((col, "Classification"))
+    
+    if potential_targets:
+        suggested_tasks.append("Supervised Learning (Prediction)")
+    
+    if len(numeric_cols) >= 2:
+        suggested_tasks.append("Clustering (Unsupervised)")
+    
+    # Task selection
+    ml_task = st.selectbox(
+        "Choose ML Task:",
+        ["Data Exploration"] + suggested_tasks,
+        help="Select the type of machine learning task to perform"
+    )
+    
+    if ml_task == "Data Exploration":
+        # Basic data exploration with ML insights
+        st.markdown("### 📊 Exploratory Data Analysis")
+        
+        # Correlation analysis for numeric columns
+        if len(numeric_cols) >= 2:
+            st.markdown("#### 🔗 Correlation Analysis")
+            corr_matrix = df[numeric_cols].corr()
+            fig = px.imshow(corr_matrix,
+                          labels=dict(x="Variables", y="Variables", color="Correlation"),
+                          x=corr_matrix.columns,
+                          y=corr_matrix.columns,
+                          color_continuous_scale="RdBu_r",
+                          title="Feature Correlation Heatmap")
+            fig.update_traces(text=np.around(corr_matrix.values, decimals=2),
+                            texttemplate="%{text}", textfont_size=8)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Highlight strong correlations
+            strong_corrs = []
+            for i in range(len(corr_matrix.columns)):
+                for j in range(i+1, len(corr_matrix.columns)):
+                    corr_val = corr_matrix.iloc[i, j]
+                    if abs(corr_val) > 0.7:
+                        strong_corrs.append((corr_matrix.columns[i], corr_matrix.columns[j], corr_val))
+            
+            if strong_corrs:
+                st.markdown("**🔥 Strong Correlations (|r| > 0.7):**")
+                for col1, col2, corr in strong_corrs:
+                    st.write(f"• {col1} ↔ {col2}: {corr:.3f}")
+        
+        # Distribution analysis
+        if numeric_cols:
+            st.markdown("#### 📈 Data Distributions")
+            selected_col = st.selectbox("Select column for distribution analysis:", numeric_cols)
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                # Histogram
+                fig = px.histogram(df, x=selected_col, title=f"Distribution of {selected_col}")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Box plot
+                fig = px.box(df, y=selected_col, title=f"Box Plot of {selected_col}")
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Statistical summary
+            st.markdown(f"**Statistical Summary for {selected_col}:**")
+            summary = df[selected_col].describe()
+            st.dataframe(summary.to_frame().T, use_container_width=True)
+    
+    elif ml_task == "Supervised Learning (Prediction)":
+        st.markdown("### 🎯 Supervised Learning")
+        
+        # Target selection
+        target_col = st.selectbox(
+            "Select Target Column (what to predict):",
+            potential_targets,
+            format_func=lambda x: f"{x[0]} ({x[1]})",
+            help="Choose the column you want to predict"
+        )
+        
+        if target_col:
+            target_name, task_type = target_col
+            
+            # Feature selection
+            available_features = [col for col in numeric_cols + categorical_cols if col != target_name]
+            selected_features = st.multiselect(
+                "Select Feature Columns:",
+                available_features,
+                default=available_features[:5],
+                help="Choose the columns to use as input features"
+            )
+            
+            if selected_features and st.button("🚀 Train Model", type="primary"):
+                with st.spinner(f"Training {task_type} model..."):
+                    # Prepare data
+                    X = df[selected_features].copy()
+                    y = df[target_name].copy()
+                    
+                    # Handle missing values
+                    X = X.fillna(X.mean() if X.select_dtypes(include=[np.number]).shape[1] > 0 else X.mode().iloc[0])
+                    
+                    # Encode categorical variables
+                    le_dict = {}
+                    for col in X.select_dtypes(include=['object']).columns:
+                        le = LabelEncoder()
+                        X[col] = le.fit_transform(X[col].astype(str))
+                        le_dict[col] = le
+                    
+                    # Encode target if needed
+                    target_le = None
+                    if y.dtype == 'object':
+                        target_le = LabelEncoder()
+                        y = target_le.fit_transform(y)
+                    
+                    try:
+                        # Split data
+                        X_train, X_test, y_train, y_test = train_test_split(
+                            X, y, test_size=0.2, random_state=42
+                        )
+                        
+                        # Train model
+                        if task_type == "Classification":
+                            model = RandomForestClassifier(n_estimators=100, random_state=42)
+                        else:
+                            model = RandomForestRegressor(n_estimators=100, random_state=42)
+                        
+                        model.fit(X_train, y_train)
+                        predictions = model.predict(X_test)
+                        
+                        # Display results
+                        st.success("✅ Model trained successfully!")
+                        
+                        # Model performance
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("#### 📊 Model Performance")
+                            if task_type == "Classification":
+                                accuracy = (predictions == y_test).mean()
+                                st.metric("Accuracy", f"{accuracy:.3f}")
+                                
+                                # Confusion matrix
+                                cm = confusion_matrix(y_test, predictions)
+                                fig = px.imshow(cm, title="Confusion Matrix", 
+                                              color_continuous_scale="Blues",
+                                              aspect="auto")
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                r2 = r2_score(y_test, predictions)
+                                rmse = np.sqrt(mean_squared_error(y_test, predictions))
+                                st.metric("R² Score", f"{r2:.3f}")
+                                st.metric("RMSE", f"{rmse:.3f}")
+                                
+                                # Actual vs Predicted
+                                fig = px.scatter(x=y_test, y=predictions, 
+                                               title="Actual vs Predicted",
+                                               labels={'x': 'Actual', 'y': 'Predicted'})
+                                fig.add_shape(type='line', x0=y_test.min(), y0=y_test.min(),
+                                            x1=y_test.max(), y1=y_test.max(),
+                                            line=dict(dash='dash', color='red'))
+                                st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            st.markdown("#### 🎯 Feature Importance")
+                            importance_df = pd.DataFrame({
+                                'Feature': selected_features,
+                                'Importance': model.feature_importances_
+                            }).sort_values('Importance', ascending=False)
+                            
+                            fig = px.bar(importance_df, x='Importance', y='Feature',
+                                       orientation='h', title="Feature Importance")
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                        # Model insights
+                        st.markdown("#### 💡 Model Insights")
+                        insights = []
+                        
+                        if task_type == "Classification":
+                            insights.append(f"🎯 Model achieved {accuracy:.1%} accuracy on test data")
+                        else:
+                            insights.append(f"🎯 Model explains {r2:.1%} of variance in {target_name}")
+                        
+                        top_features = importance_df.head(3)['Feature'].tolist()
+                        insights.append(f"🔝 Most important features: {', '.join(top_features)}")
+                        
+                        for insight in insights:
+                            st.write(f"• {insight}")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error training model: {str(e)}")
+    
+    elif ml_task == "Clustering (Unsupervised)":
+        st.markdown("### 🔍 Clustering Analysis")
+        
+        # Feature selection for clustering
+        selected_features = st.multiselect(
+            "Select Features for Clustering:",
+            numeric_cols,
+            default=numeric_cols[:4] if len(numeric_cols) >= 4 else numeric_cols,
+            help="Choose numeric columns for clustering"
+        )
+        
+        n_clusters = st.slider("Number of Clusters:", 2, 10, 3)
+        
+        if selected_features and st.button("🔍 Perform Clustering", type="primary"):
+            with st.spinner("Performing clustering analysis..."):
+                try:
+                    # Prepare data
+                    X = df[selected_features].fillna(df[selected_features].mean())
+                    
+                    # Standardize features
+                    scaler = StandardScaler()
+                    X_scaled = scaler.fit_transform(X)
+                    
+                    # Perform clustering
+                    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+                    clusters = kmeans.fit_predict(X_scaled)
+                    
+                    # Calculate silhouette score
+                    sil_score = silhouette_score(X_scaled, clusters)
+                    
+                    # Add clusters to dataframe
+                    df_clustered = df.copy()
+                    df_clustered['Cluster'] = clusters
+                    
+                    # Display results
+                    st.success("✅ Clustering completed!")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.metric("Silhouette Score", f"{sil_score:.3f}")
+                        st.write("*Higher is better (max: 1.0)*")
+                        
+                        # Cluster sizes
+                        cluster_counts = pd.Series(clusters).value_counts().sort_index()
+                        fig = px.bar(x=cluster_counts.index, y=cluster_counts.values,
+                                   title="Cluster Sizes",
+                                   labels={'x': 'Cluster', 'y': 'Number of Points'})
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    with col2:
+                        # Visualization based on number of features
+                        if len(selected_features) >= 2:
+                            fig = px.scatter(df_clustered, x=selected_features[0], y=selected_features[1],
+                                           color='Cluster', title="Cluster Visualization")
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                    # Cluster analysis
+                    st.markdown("#### 📋 Cluster Analysis")
+                    cluster_summary = df_clustered.groupby('Cluster')[selected_features].mean()
+                    st.dataframe(cluster_summary, use_container_width=True)
+                    
+                    # Insights
+                    st.markdown("#### 💡 Clustering Insights")
+                    insights = []
+                    insights.append(f"🎯 Found {n_clusters} clusters with silhouette score of {sil_score:.3f}")
+                    
+                    # Find the largest cluster
+                    largest_cluster = cluster_counts.idxmax()
+                    largest_size = cluster_counts.max()
+                    insights.append(f"📊 Cluster {largest_cluster} is the largest with {largest_size} points")
+                    
+                    for insight in insights:
+                        st.write(f"• {insight}")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error performing clustering: {str(e)}")
+
 def main():
     """Main application"""
     # Header
@@ -1304,7 +1653,7 @@ def main():
     
     # Main content tabs
     if st.session_state.df is not None:
-        tab1, tab2, tab3 = st.tabs(["💬 Smart Chat", "🎯 Direct Viz", "🤖 AI Agent"])
+        tab1, tab2, tab3, tab4 = st.tabs(["💬 Smart Chat", "🎯 Direct Viz", "🤖 AI Agent", "🧠 ML"])
         
         with tab1:
             chat_interface()
@@ -1314,6 +1663,9 @@ def main():
         
         with tab3:
             ai_agent_interface()
+            
+        with tab4:
+            ml_interface()
     else:
         st.info("👆 Please upload a CSV file using the sidebar to get started!")
         
