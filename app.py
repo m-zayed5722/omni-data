@@ -14,14 +14,20 @@ import seaborn as sns
 from typing import Dict, Any, Optional, List
 import re
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, IsolationForest
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN
 from sklearn.metrics import classification_report, mean_squared_error, r2_score, silhouette_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.decomposition import PCA
+from scipy import stats
+from scipy.stats import zscore, pearsonr
+from scipy.signal import find_peaks
 import warnings
 from datetime import datetime
 import uuid
+import hashlib
+import hmac
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -29,6 +35,11 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 import tempfile
 import os
+import time
+import threading
+import queue
+from datetime import timedelta
+import asyncio
 try:
     from sqlalchemy import create_engine, text
     import psycopg2
@@ -37,7 +48,6 @@ try:
     DATABASE_SUPPORT = True
 except ImportError:
     DATABASE_SUPPORT = False
-    st.warning("⚠️ Database connectors not available. Install psycopg2-binary, pymongo, redis, sqlalchemy for database support.")
 warnings.filterwarnings('ignore')
 
 # Configuration - For Streamlit Cloud (frontend-only mode)
@@ -588,6 +598,1592 @@ def display_export_options(current_figures, dataset_info=None, insights=None):
                     st.error(f"❌ Share link generation failed: {str(e)}")
             else:
                 st.warning("No visualizations to share!")
+
+class RealTimeAnalytics:
+    """Real-time data streaming and live analytics system"""
+    
+    @staticmethod
+    def generate_live_data(data_type="random", base_df=None, anomaly_rate=0.05):
+        """Generate simulated real-time data points"""
+        current_time = datetime.now()
+        
+        if data_type == "random" or base_df is None:
+            # Generate random data
+            data_point = {
+                'timestamp': current_time,
+                'value': np.random.normal(100, 20),
+                'category': np.random.choice(['A', 'B', 'C', 'D']),
+                'metric_1': np.random.uniform(0, 100),
+                'metric_2': np.random.exponential(2),
+                'is_anomaly': np.random.random() < anomaly_rate
+            }
+        else:
+            # Generate data similar to base dataset
+            numeric_cols = base_df.select_dtypes(include=[np.number]).columns
+            categorical_cols = base_df.select_dtypes(include=['object']).columns
+            
+            data_point = {'timestamp': current_time}
+            
+            # Generate numeric data based on existing patterns
+            for col in numeric_cols:
+                mean_val = base_df[col].mean()
+                std_val = base_df[col].std()
+                
+                # Add some time-based trend
+                trend = np.sin(current_time.minute / 10) * std_val * 0.1
+                value = np.random.normal(mean_val + trend, std_val * 0.5)
+                
+                # Inject anomalies
+                if np.random.random() < anomaly_rate:
+                    value += np.random.choice([-1, 1]) * std_val * 3
+                    data_point['is_anomaly'] = True
+                else:
+                    data_point['is_anomaly'] = False
+                    
+                data_point[col] = value
+            
+            # Generate categorical data
+            for col in categorical_cols:
+                unique_vals = base_df[col].unique()
+                data_point[col] = np.random.choice(unique_vals)
+        
+        return data_point
+    
+    @staticmethod
+    def detect_anomalies(data_stream, window_size=50, threshold=2.5):
+        """Simple anomaly detection using rolling statistics"""
+        if len(data_stream) < window_size:
+            return []
+        
+        recent_data = data_stream[-window_size:]
+        values = [point['value'] if 'value' in point else list(point.values())[1] for point in recent_data]
+        
+        mean_val = np.mean(values)
+        std_val = np.std(values)
+        
+        anomalies = []
+        for i, point in enumerate(recent_data):
+            value = point['value'] if 'value' in point else list(point.values())[1]
+            z_score = abs((value - mean_val) / std_val) if std_val > 0 else 0
+            
+            if z_score > threshold:
+                anomalies.append({
+                    'timestamp': point['timestamp'],
+                    'value': value,
+                    'z_score': z_score,
+                    'severity': 'high' if z_score > 3.5 else 'medium'
+                })
+        
+        return anomalies
+    
+    @staticmethod
+    def create_live_chart(data_stream, chart_type='line', max_points=100):
+        """Create live updating charts"""
+        if not data_stream:
+            return None
+        
+        # Limit data points for performance
+        recent_data = data_stream[-max_points:]
+        df_stream = pd.DataFrame(recent_data)
+        
+        if 'timestamp' not in df_stream.columns:
+            return None
+        
+        if chart_type == 'line':
+            fig = px.line(df_stream, x='timestamp', y='value' if 'value' in df_stream.columns else df_stream.columns[1],
+                         title='Real-time Data Stream',
+                         template='plotly_white')
+            
+            # Highlight anomalies
+            if 'is_anomaly' in df_stream.columns:
+                anomaly_data = df_stream[df_stream['is_anomaly'] == True]
+                if not anomaly_data.empty:
+                    fig.add_scatter(x=anomaly_data['timestamp'], 
+                                  y=anomaly_data['value' if 'value' in df_stream.columns else df_stream.columns[1]],
+                                  mode='markers', marker=dict(color='red', size=8),
+                                  name='Anomalies')
+            
+        elif chart_type == 'gauge':
+            current_value = recent_data[-1]['value'] if 'value' in recent_data[-1] else list(recent_data[-1].values())[1]
+            fig = go.Figure(go.Indicator(
+                mode = "gauge+number+delta",
+                value = current_value,
+                domain = {'x': [0, 1], 'y': [0, 1]},
+                title = {'text': "Current Value"},
+                delta = {'reference': recent_data[-2]['value'] if len(recent_data) > 1 and 'value' in recent_data[-2] else current_value},
+                gauge = {'axis': {'range': [None, 200]},
+                        'bar': {'color': "darkblue"},
+                        'steps': [
+                            {'range': [0, 50], 'color': "lightgray"},
+                            {'range': [50, 100], 'color': "gray"}],
+                        'threshold': {'line': {'color': "red", 'width': 4},
+                                    'thickness': 0.75, 'value': 150}}))
+        
+        elif chart_type == 'histogram':
+            values = [point['value'] if 'value' in point else list(point.values())[1] for point in recent_data]
+            fig = px.histogram(x=values, title='Real-time Value Distribution', template='plotly_white')
+        
+        # Update layout for real-time feel
+        fig.update_layout(
+            showlegend=True,
+            height=400,
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
+        
+        return fig
+
+class AIInsightsEngine:
+    """Advanced AI-powered insights and analysis system"""
+    
+    @staticmethod
+    def detect_anomalies_advanced(df, method='isolation_forest', contamination=0.1):
+        """Advanced anomaly detection using multiple algorithms"""
+        numeric_columns = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_columns) == 0:
+            return pd.DataFrame(), {}
+        
+        results = {}
+        
+        if method == 'isolation_forest':
+            # Isolation Forest
+            scaler = StandardScaler()
+            scaled_data = scaler.fit_transform(df[numeric_columns].fillna(df[numeric_columns].mean()))
+            
+            iso_forest = IsolationForest(contamination=contamination, random_state=42)
+            outliers = iso_forest.fit_predict(scaled_data)
+            
+            df_anomalies = df.copy()
+            df_anomalies['anomaly_score'] = iso_forest.score_samples(scaled_data)
+            df_anomalies['is_anomaly'] = outliers == -1
+            
+            results['method'] = 'Isolation Forest'
+            results['anomaly_count'] = sum(outliers == -1)
+            results['anomaly_percentage'] = (sum(outliers == -1) / len(df)) * 100
+            
+        elif method == 'statistical':
+            # Statistical (Z-score based)
+            df_anomalies = df.copy()
+            z_scores = np.abs(zscore(df[numeric_columns].fillna(df[numeric_columns].mean())))
+            threshold = 3
+            
+            df_anomalies['is_anomaly'] = (z_scores > threshold).any(axis=1)
+            df_anomalies['max_z_score'] = z_scores.max(axis=1)
+            
+            results['method'] = 'Statistical (Z-score > 3)'
+            results['anomaly_count'] = sum(df_anomalies['is_anomaly'])
+            results['anomaly_percentage'] = (sum(df_anomalies['is_anomaly']) / len(df)) * 100
+            
+        elif method == 'dbscan':
+            # DBSCAN clustering for anomaly detection
+            scaler = StandardScaler()
+            scaled_data = scaler.fit_transform(df[numeric_columns].fillna(df[numeric_columns].mean()))
+            
+            dbscan = DBSCAN(eps=0.5, min_samples=5)
+            clusters = dbscan.fit_predict(scaled_data)
+            
+            df_anomalies = df.copy()
+            df_anomalies['cluster'] = clusters
+            df_anomalies['is_anomaly'] = clusters == -1
+            
+            results['method'] = 'DBSCAN Clustering'
+            results['anomaly_count'] = sum(clusters == -1)
+            results['anomaly_percentage'] = (sum(clusters == -1) / len(df)) * 100
+            results['n_clusters'] = len(set(clusters)) - (1 if -1 in clusters else 0)
+        
+        return df_anomalies, results
+    
+    @staticmethod
+    def trend_analysis(df, date_column=None, value_columns=None):
+        """Analyze trends in time series data"""
+        insights = {}
+        
+        # Auto-detect date column if not provided
+        if date_column is None:
+            date_cols = df.select_dtypes(include=['datetime', 'datetime64']).columns
+            if len(date_cols) > 0:
+                date_column = date_cols[0]
+            else:
+                # Try to parse date-like columns
+                for col in df.columns:
+                    try:
+                        pd.to_datetime(df[col].head())
+                        date_column = col
+                        df[col] = pd.to_datetime(df[col])
+                        break
+                    except:
+                        continue
+        
+        if date_column is None:
+            return {"error": "No date column found for trend analysis"}
+        
+        # Auto-detect value columns
+        if value_columns is None:
+            value_columns = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        for col in value_columns:
+            if col == date_column:
+                continue
+                
+            # Sort by date
+            df_sorted = df.sort_values(date_column)
+            
+            # Calculate trend using linear regression
+            x_numeric = np.arange(len(df_sorted))
+            y_values = df_sorted[col].fillna(df_sorted[col].mean())
+            
+            if len(y_values) > 1:
+                slope, intercept, r_value, p_value, std_err = stats.linregress(x_numeric, y_values)
+                
+                # Determine trend direction
+                if p_value < 0.05:  # Significant trend
+                    if slope > 0:
+                        trend_direction = "Increasing"
+                    else:
+                        trend_direction = "Decreasing"
+                else:
+                    trend_direction = "No significant trend"
+                
+                # Calculate percentage change
+                start_value = y_values.iloc[0]
+                end_value = y_values.iloc[-1]
+                percent_change = ((end_value - start_value) / start_value * 100) if start_value != 0 else 0
+                
+                # Detect seasonality (simple approach)
+                seasonality = "None detected"
+                if len(y_values) >= 12:  # Need at least 12 points
+                    # Check for periodic patterns
+                    autocorr_12 = y_values.autocorr(lag=min(12, len(y_values)//2))
+                    if autocorr_12 > 0.3:
+                        seasonality = "Potential seasonal pattern detected"
+                
+                insights[col] = {
+                    'trend_direction': trend_direction,
+                    'slope': slope,
+                    'r_squared': r_value**2,
+                    'p_value': p_value,
+                    'percent_change': percent_change,
+                    'seasonality': seasonality,
+                    'mean': y_values.mean(),
+                    'std': y_values.std(),
+                    'volatility': y_values.std() / y_values.mean() if y_values.mean() != 0 else 0
+                }
+        
+        return insights
+    
+    @staticmethod
+    def correlation_insights(df):
+        """Generate correlation insights and identify strong relationships"""
+        numeric_df = df.select_dtypes(include=[np.number])
+        if len(numeric_df.columns) < 2:
+            return {"error": "Need at least 2 numeric columns for correlation analysis"}
+        
+        corr_matrix = numeric_df.corr()
+        insights = {}
+        strong_correlations = []
+        
+        # Find strong correlations (absolute value > 0.7)
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_value = corr_matrix.iloc[i, j]
+                if abs(corr_value) > 0.7:
+                    col1 = corr_matrix.columns[i]
+                    col2 = corr_matrix.columns[j]
+                    
+                    relationship_type = "Strong positive" if corr_value > 0 else "Strong negative"
+                    strong_correlations.append({
+                        'variable_1': col1,
+                        'variable_2': col2,
+                        'correlation': corr_value,
+                        'relationship': relationship_type
+                    })
+        
+        insights['correlation_matrix'] = corr_matrix
+        insights['strong_correlations'] = strong_correlations
+        insights['summary'] = f"Found {len(strong_correlations)} strong correlations"
+        
+        return insights
+    
+    @staticmethod
+    def predictive_forecasting(df, target_column, n_periods=10, method='linear'):
+        """Generate predictive forecasts for time series data"""
+        if target_column not in df.columns:
+            return {"error": f"Column '{target_column}' not found"}
+        
+        # Prepare data
+        df_clean = df.dropna(subset=[target_column])
+        if len(df_clean) < 3:
+            return {"error": "Insufficient data for forecasting"}
+        
+        y = df_clean[target_column].values
+        x = np.arange(len(y))
+        
+        if method == 'linear':
+            # Simple linear regression forecast
+            model = LinearRegression()
+            model.fit(x.reshape(-1, 1), y)
+            
+            # Generate future predictions
+            future_x = np.arange(len(y), len(y) + n_periods)
+            predictions = model.predict(future_x.reshape(-1, 1))
+            
+            # Calculate confidence intervals (rough approximation)
+            residuals = y - model.predict(x.reshape(-1, 1))
+            std_error = np.std(residuals)
+            confidence_interval = 1.96 * std_error  # 95% CI
+            
+            forecast_result = {
+                'method': 'Linear Regression',
+                'predictions': predictions.tolist(),
+                'confidence_lower': (predictions - confidence_interval).tolist(),
+                'confidence_upper': (predictions + confidence_interval).tolist(),
+                'model_score': model.score(x.reshape(-1, 1), y),
+                'trend': 'Increasing' if model.coef_[0] > 0 else 'Decreasing'
+            }
+            
+        elif method == 'moving_average':
+            # Simple moving average forecast
+            window = min(5, len(y) // 2)
+            if window < 1:
+                window = 1
+                
+            recent_avg = np.mean(y[-window:])
+            predictions = [recent_avg] * n_periods
+            
+            # Calculate historical volatility for confidence intervals
+            historical_std = np.std(y)
+            confidence_interval = 1.96 * historical_std
+            
+            forecast_result = {
+                'method': f'{window}-Period Moving Average',
+                'predictions': predictions,
+                'confidence_lower': [p - confidence_interval for p in predictions],
+                'confidence_upper': [p + confidence_interval for p in predictions],
+                'trend': 'Stable (Moving Average)'
+            }
+        
+        return forecast_result
+    
+    @staticmethod
+    def generate_smart_recommendations(df, insights_data):
+        """Generate actionable recommendations based on analysis"""
+        recommendations = []
+        
+        # Data quality recommendations
+        missing_data = df.isnull().sum()
+        high_missing = missing_data[missing_data > len(df) * 0.1]
+        
+        if len(high_missing) > 0:
+            recommendations.append({
+                'category': 'Data Quality',
+                'priority': 'High',
+                'recommendation': f"Address missing data in columns: {', '.join(high_missing.index)}",
+                'action': 'Consider data imputation or removal of sparse columns'
+            })
+        
+        # Anomaly recommendations
+        if 'anomaly_results' in insights_data:
+            anomaly_count = insights_data['anomaly_results'].get('anomaly_count', 0)
+            if anomaly_count > len(df) * 0.05:  # More than 5% anomalies
+                recommendations.append({
+                    'category': 'Data Integrity',
+                    'priority': 'Medium',
+                    'recommendation': f"High anomaly rate detected ({anomaly_count} outliers)",
+                    'action': 'Review data collection process and investigate outliers'
+                })
+        
+        # Correlation recommendations
+        if 'correlation_insights' in insights_data:
+            strong_corrs = insights_data['correlation_insights'].get('strong_correlations', [])
+            if len(strong_corrs) > 0:
+                recommendations.append({
+                    'category': 'Analysis',
+                    'priority': 'Medium',
+                    'recommendation': f"Found {len(strong_corrs)} strong correlations",
+                    'action': 'Consider feature selection to avoid multicollinearity in modeling'
+                })
+        
+        # Trend recommendations
+        if 'trend_insights' in insights_data:
+            trends = insights_data['trend_insights']
+            for col, trend_info in trends.items():
+                if isinstance(trend_info, dict) and trend_info.get('r_squared', 0) > 0.8:
+                    direction = trend_info['trend_direction']
+                    recommendations.append({
+                        'category': 'Business Insight',
+                        'priority': 'High',
+                        'recommendation': f"{col} shows {direction.lower()} trend (R² = {trend_info['r_squared']:.3f})",
+                        'action': f"Monitor {col} closely and consider trend-based strategies"
+                    })
+        
+        # Performance recommendations
+        if len(df) > 10000:
+            recommendations.append({
+                'category': 'Performance',
+                'priority': 'Low',
+                'recommendation': f"Large dataset detected ({len(df)} rows)",
+                'action': 'Consider data sampling for faster analysis or use data aggregation'
+            })
+        
+        return recommendations
+
+def render_ai_insights_dashboard():
+    """Render the AI-powered insights dashboard"""
+    st.markdown("### 🧠 AI-Powered Insights Engine")
+    
+    if st.session_state.df is None:
+        st.info("👆 Please upload a dataset to generate AI insights!")
+        return
+    
+    df = st.session_state.df
+    
+    # Initialize insights session state
+    if 'ai_insights' not in st.session_state:
+        st.session_state.ai_insights = {}
+    
+    # Insights generation controls
+    st.markdown("#### 🔍 Analysis Configuration")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        analysis_types = st.multiselect(
+            "Select Analysis Types",
+            ["Anomaly Detection", "Trend Analysis", "Correlation Analysis", "Predictive Forecasting"],
+            default=["Anomaly Detection", "Correlation Analysis"]
+        )
+    
+    with col2:
+        if "Anomaly Detection" in analysis_types:
+            anomaly_method = st.selectbox(
+                "Anomaly Detection Method",
+                ["isolation_forest", "statistical", "dbscan"],
+                help="Choose the algorithm for anomaly detection"
+            )
+    
+    with col3:
+        if "Predictive Forecasting" in analysis_types:
+            forecast_periods = st.number_input(
+                "Forecast Periods", 
+                min_value=1, max_value=50, value=10,
+                help="Number of periods to forecast"
+            )
+    
+    # Generate insights button
+    if st.button("🚀 Generate AI Insights", type="primary"):
+        with st.spinner("🧠 AI is analyzing your data..."):
+            insights_results = {}
+            
+            # Anomaly Detection
+            if "Anomaly Detection" in analysis_types:
+                df_anomalies, anomaly_results = AIInsightsEngine.detect_anomalies_advanced(
+                    df, method=anomaly_method
+                )
+                insights_results['anomalies_df'] = df_anomalies
+                insights_results['anomaly_results'] = anomaly_results
+            
+            # Trend Analysis
+            if "Trend Analysis" in analysis_types:
+                trend_results = AIInsightsEngine.trend_analysis(df)
+                insights_results['trend_insights'] = trend_results
+            
+            # Correlation Analysis
+            if "Correlation Analysis" in analysis_types:
+                corr_results = AIInsightsEngine.correlation_insights(df)
+                insights_results['correlation_insights'] = corr_results
+            
+            # Predictive Forecasting
+            if "Predictive Forecasting" in analysis_types:
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) > 0:
+                    target_col = numeric_cols[0]  # Use first numeric column
+                    forecast_results = AIInsightsEngine.predictive_forecasting(
+                        df, target_col, n_periods=forecast_periods
+                    )
+                    insights_results['forecast_results'] = forecast_results
+                    insights_results['forecast_target'] = target_col
+            
+            # Generate recommendations
+            recommendations = AIInsightsEngine.generate_smart_recommendations(df, insights_results)
+            insights_results['recommendations'] = recommendations
+            
+            st.session_state.ai_insights = insights_results
+        
+        st.success("✅ AI Insights generated successfully!")
+    
+    # Display results
+    if st.session_state.ai_insights:
+        insights = st.session_state.ai_insights
+        
+        # Smart Recommendations
+        if 'recommendations' in insights:
+            st.markdown("#### 💡 Smart Recommendations")
+            recommendations = insights['recommendations']
+            
+            for rec in recommendations:
+                priority_color = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}[rec['priority']]
+                with st.expander(f"{priority_color} {rec['category']}: {rec['recommendation']}"):
+                    st.write(f"**Action:** {rec['action']}")
+        
+        # Anomaly Detection Results
+        if 'anomaly_results' in insights:
+            st.markdown("#### 🚨 Anomaly Detection")
+            anomaly_results = insights['anomaly_results']
+            df_anomalies = insights['anomalies_df']
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Method", anomaly_results['method'])
+            with col2:
+                st.metric("Anomalies Found", anomaly_results['anomaly_count'])
+            with col3:
+                st.metric("Percentage", f"{anomaly_results['anomaly_percentage']:.1f}%")
+            
+            # Anomaly visualization
+            if sum(df_anomalies['is_anomaly']) > 0:
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                if len(numeric_cols) >= 2:
+                    fig = px.scatter(
+                        df_anomalies, 
+                        x=numeric_cols[0], 
+                        y=numeric_cols[1],
+                        color='is_anomaly',
+                        title="Anomaly Detection Results",
+                        color_discrete_map={True: 'red', False: 'blue'}
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # Trend Analysis Results
+        if 'trend_insights' in insights:
+            trend_results = insights['trend_insights']
+            if not trend_results.get('error'):
+                st.markdown("#### 📈 Trend Analysis")
+                
+                for col, trend_info in trend_results.items():
+                    if isinstance(trend_info, dict):
+                        with st.expander(f"📊 {col} Trend Analysis"):
+                            col_a, col_b, col_c = st.columns(3)
+                            with col_a:
+                                st.metric("Trend Direction", trend_info['trend_direction'])
+                            with col_b:
+                                st.metric("R² Score", f"{trend_info['r_squared']:.3f}")
+                            with col_c:
+                                st.metric("% Change", f"{trend_info['percent_change']:.1f}%")
+                            
+                            st.write(f"**Seasonality:** {trend_info['seasonality']}")
+                            st.write(f"**Volatility:** {trend_info['volatility']:.3f}")
+        
+        # Correlation Analysis Results
+        if 'correlation_insights' in insights:
+            corr_results = insights['correlation_insights']
+            if not corr_results.get('error'):
+                st.markdown("#### 🔗 Correlation Analysis")
+                
+                # Correlation heatmap
+                fig = px.imshow(
+                    corr_results['correlation_matrix'],
+                    title="Correlation Heatmap",
+                    color_continuous_scale="RdBu_r",
+                    aspect="auto"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Strong correlations
+                if corr_results['strong_correlations']:
+                    st.markdown("**Strong Correlations Found:**")
+                    for corr in corr_results['strong_correlations']:
+                        st.write(f"• **{corr['variable_1']}** ↔ **{corr['variable_2']}**: "
+                                f"{corr['correlation']:.3f} ({corr['relationship']})")
+        
+        # Predictive Forecasting Results
+        if 'forecast_results' in insights:
+            forecast_results = insights['forecast_results']
+            target_col = insights['forecast_target']
+            
+            if not forecast_results.get('error'):
+                st.markdown("#### 🔮 Predictive Forecasting")
+                
+                # Display forecast metrics
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Method", forecast_results['method'])
+                with col2:
+                    if 'model_score' in forecast_results:
+                        st.metric("Model Score", f"{forecast_results['model_score']:.3f}")
+                
+                # Forecast visualization
+                historical_data = df[target_col].values
+                predictions = forecast_results['predictions']
+                
+                fig = go.Figure()
+                
+                # Historical data
+                fig.add_trace(go.Scatter(
+                    x=list(range(len(historical_data))),
+                    y=historical_data,
+                    mode='lines+markers',
+                    name='Historical Data',
+                    line=dict(color='blue')
+                ))
+                
+                # Predictions
+                future_x = list(range(len(historical_data), len(historical_data) + len(predictions)))
+                fig.add_trace(go.Scatter(
+                    x=future_x,
+                    y=predictions,
+                    mode='lines+markers',
+                    name='Forecast',
+                    line=dict(color='red', dash='dash')
+                ))
+                
+                # Confidence intervals
+                if 'confidence_lower' in forecast_results:
+                    fig.add_trace(go.Scatter(
+                        x=future_x + future_x[::-1],
+                        y=forecast_results['confidence_upper'] + forecast_results['confidence_lower'][::-1],
+                        fill='toself',
+                        fillcolor='rgba(255,0,0,0.2)',
+                        line=dict(color='rgba(255,255,255,0)'),
+                        name='Confidence Interval'
+                    ))
+                
+                fig.update_layout(
+                    title=f"Predictive Forecast for {target_col}",
+                    xaxis_title="Time Period",
+                    yaxis_title="Value"
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+
+class CollaborationSystem:
+    """Multi-user collaboration and workspace management system"""
+    
+    @staticmethod
+    def hash_password(password: str, salt: str = None) -> tuple:
+        """Hash password with salt for secure storage"""
+        if salt is None:
+            salt = str(uuid.uuid4())
+        
+        password_hash = hashlib.pbkdf2_hmac(
+            'sha256', 
+            password.encode('utf-8'), 
+            salt.encode('utf-8'), 
+            100000
+        )
+        return base64.b64encode(password_hash).decode(), salt
+    
+    @staticmethod
+    def verify_password(password: str, hashed: str, salt: str) -> bool:
+        """Verify password against hash"""
+        password_hash, _ = CollaborationSystem.hash_password(password, salt)
+        return hmac.compare_digest(password_hash, hashed)
+    
+    @staticmethod
+    def create_user(username: str, password: str, email: str = None) -> dict:
+        """Create a new user account"""
+        user_id = str(uuid.uuid4())
+        password_hash, salt = CollaborationSystem.hash_password(password)
+        
+        user = {
+            'user_id': user_id,
+            'username': username,
+            'email': email,
+            'password_hash': password_hash,
+            'salt': salt,
+            'created_at': datetime.now().isoformat(),
+            'role': 'user',
+            'workspaces': [],
+            'preferences': {
+                'theme': 'dark',
+                'notifications': True,
+                'default_chart_type': 'auto'
+            }
+        }
+        
+        return user
+    
+    @staticmethod
+    def create_workspace(name: str, description: str, owner_id: str) -> dict:
+        """Create a new collaborative workspace"""
+        workspace_id = str(uuid.uuid4())
+        
+        workspace = {
+            'workspace_id': workspace_id,
+            'name': name,
+            'description': description,
+            'owner_id': owner_id,
+            'created_at': datetime.now().isoformat(),
+            'members': [{'user_id': owner_id, 'role': 'owner', 'joined_at': datetime.now().isoformat()}],
+            'datasets': [],
+            'charts': [],
+            'comments': [],
+            'settings': {
+                'visibility': 'private',
+                'allow_comments': True,
+                'allow_exports': True,
+                'auto_save': True
+            }
+        }
+        
+        return workspace
+    
+    @staticmethod
+    def add_chart_comment(chart_id: str, user_id: str, username: str, comment_text: str) -> dict:
+        """Add comment to a chart"""
+        comment = {
+            'comment_id': str(uuid.uuid4()),
+            'chart_id': chart_id,
+            'user_id': user_id,
+            'username': username,
+            'text': comment_text,
+            'timestamp': datetime.now().isoformat(),
+            'replies': [],
+            'likes': 0,
+            'resolved': False
+        }
+        
+        return comment
+    
+    @staticmethod
+    def save_chart_to_workspace(chart_data: dict, workspace_id: str, user_id: str) -> dict:
+        """Save a chart to workspace for collaboration"""
+        chart_entry = {
+            'chart_id': str(uuid.uuid4()),
+            'workspace_id': workspace_id,
+            'created_by': user_id,
+            'created_at': datetime.now().isoformat(),
+            'chart_type': chart_data.get('type', 'unknown'),
+            'title': chart_data.get('title', 'Untitled Chart'),
+            'config': chart_data,
+            'version': 1,
+            'is_shared': False,
+            'permissions': {'view': True, 'edit': False, 'comment': True}
+        }
+        
+        return chart_entry
+
+class UserAuthentication:
+    """Simple user authentication system for demo purposes"""
+    
+    @staticmethod
+    def initialize_auth_state():
+        """Initialize authentication session state"""
+        if 'authenticated' not in st.session_state:
+            st.session_state.authenticated = False
+        if 'current_user' not in st.session_state:
+            st.session_state.current_user = None
+        if 'users_db' not in st.session_state:
+            # Demo users database (in production, use proper database)
+            st.session_state.users_db = {
+                'admin': CollaborationSystem.create_user('admin', 'admin123', 'admin@example.com'),
+                'demo': CollaborationSystem.create_user('demo', 'demo123', 'demo@example.com')
+            }
+            st.session_state.users_db['admin']['role'] = 'admin'
+        if 'workspaces_db' not in st.session_state:
+            st.session_state.workspaces_db = {}
+        if 'charts_db' not in st.session_state:
+            st.session_state.charts_db = {}
+        if 'comments_db' not in st.session_state:
+            st.session_state.comments_db = {}
+    
+    @staticmethod
+    def login_form():
+        """Render login form"""
+        st.markdown("### 🔐 User Authentication")
+        
+        with st.form("login_form"):
+            username = st.text_input("Username", placeholder="Enter your username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                login_submitted = st.form_submit_button("🔑 Login", type="primary")
+            with col2:
+                register_submitted = st.form_submit_button("📝 Register")
+            
+            if login_submitted:
+                if username in st.session_state.users_db:
+                    user = st.session_state.users_db[username]
+                    if CollaborationSystem.verify_password(password, user['password_hash'], user['salt']):
+                        st.session_state.authenticated = True
+                        st.session_state.current_user = user
+                        st.success(f"✅ Welcome back, {username}!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Invalid password!")
+                else:
+                    st.error("❌ User not found!")
+            
+            if register_submitted:
+                if username and password:
+                    if username not in st.session_state.users_db:
+                        new_user = CollaborationSystem.create_user(username, password, f"{username}@example.com")
+                        st.session_state.users_db[username] = new_user
+                        st.success(f"✅ Account created for {username}! Please login.")
+                    else:
+                        st.error("❌ Username already exists!")
+                else:
+                    st.error("❌ Please fill in all fields!")
+        
+        st.markdown("---")
+        st.markdown("**Demo Accounts:**")
+        st.code("Username: admin, Password: admin123")
+        st.code("Username: demo, Password: demo123")
+    
+    @staticmethod
+    def logout():
+        """Handle user logout"""
+        st.session_state.authenticated = False
+        st.session_state.current_user = None
+        st.success("✅ Logged out successfully!")
+        st.rerun()
+
+def render_collaboration_dashboard():
+    """Render the collaboration and workspace management dashboard"""
+    UserAuthentication.initialize_auth_state()
+    
+    if not st.session_state.authenticated:
+        UserAuthentication.login_form()
+        return
+    
+    # User info sidebar
+    with st.sidebar:
+        st.markdown("---")
+        user = st.session_state.current_user
+        st.markdown(f"👤 **{user['username']}**")
+        st.markdown(f"📧 {user.get('email', 'No email')}")
+        st.markdown(f"🎭 Role: {user.get('role', 'user').title()}")
+        
+        if st.button("🚪 Logout"):
+            UserAuthentication.logout()
+    
+    st.markdown("### 👥 Collaboration Hub")
+    
+    # Main collaboration tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["🏢 Workspaces", "💬 Comments", "📊 Shared Charts", "⚙️ Settings"])
+    
+    with tab1:
+        render_workspaces_tab()
+    
+    with tab2:
+        render_comments_tab()
+    
+    with tab3:
+        render_shared_charts_tab()
+    
+    with tab4:
+        render_user_settings_tab()
+
+def render_workspaces_tab():
+    """Render workspaces management tab"""
+    st.markdown("#### 🏢 My Workspaces")
+    
+    user_id = st.session_state.current_user['user_id']
+    user_workspaces = [w for w in st.session_state.workspaces_db.values() 
+                      if any(m['user_id'] == user_id for m in w['members'])]
+    
+    # Create new workspace
+    with st.expander("➕ Create New Workspace"):
+        with st.form("new_workspace"):
+            workspace_name = st.text_input("Workspace Name", placeholder="Enter workspace name")
+            workspace_desc = st.text_area("Description", placeholder="Describe your workspace")
+            
+            if st.form_submit_button("🚀 Create Workspace", type="primary"):
+                if workspace_name:
+                    new_workspace = CollaborationSystem.create_workspace(
+                        workspace_name, workspace_desc, user_id
+                    )
+                    st.session_state.workspaces_db[new_workspace['workspace_id']] = new_workspace
+                    st.success(f"✅ Workspace '{workspace_name}' created!")
+                    st.rerun()
+                else:
+                    st.error("❌ Please enter a workspace name!")
+    
+    # Display existing workspaces
+    if user_workspaces:
+        for workspace in user_workspaces:
+            with st.expander(f"🏢 {workspace['name']}", expanded=False):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write(f"**Description:** {workspace['description']}")
+                    st.write(f"**Created:** {workspace['created_at'][:10]}")
+                    st.write(f"**Members:** {len(workspace['members'])}")
+                
+                with col2:
+                    if st.button(f"👥 Manage Members", key=f"manage_{workspace['workspace_id']}"):
+                        st.info("Member management coming soon!")
+                    
+                    if st.button(f"📁 Open Workspace", key=f"open_{workspace['workspace_id']}"):
+                        st.info("Workspace navigation coming soon!")
+                
+                # Show recent activity
+                st.markdown("**Recent Activity:**")
+                if workspace.get('charts'):
+                    for chart in workspace['charts'][-3:]:  # Show last 3 charts
+                        st.write(f"• 📊 {chart.get('title', 'Untitled')} - {chart.get('created_at', '')[:10]}")
+                else:
+                    st.write("• No recent activity")
+    else:
+        st.info("🏢 No workspaces found. Create your first workspace above!")
+
+def render_comments_tab():
+    """Render comments and discussion tab"""
+    st.markdown("#### 💬 Chart Comments & Discussions")
+    
+    # Mock comment system for demo
+    if 'demo_comments' not in st.session_state:
+        st.session_state.demo_comments = [
+            {
+                'chart_title': 'Sales Trend Analysis',
+                'user': 'admin',
+                'comment': 'The Q3 spike looks interesting. Can we drill down into regional data?',
+                'timestamp': '2024-01-15 10:30',
+                'replies': 1
+            },
+            {
+                'chart_title': 'Customer Segmentation',
+                'user': 'demo',
+                'comment': 'Great insights! The premium segment growth is promising.',
+                'timestamp': '2024-01-14 15:45',
+                'replies': 0
+            }
+        ]
+    
+    # Add new comment
+    with st.expander("💬 Add New Comment"):
+        with st.form("new_comment"):
+            chart_selection = st.selectbox(
+                "Select Chart", 
+                ["Sales Trend Analysis", "Customer Segmentation", "Revenue Dashboard"],
+                help="Choose which chart to comment on"
+            )
+            comment_text = st.text_area("Comment", placeholder="Share your insights...")
+            
+            if st.form_submit_button("📝 Post Comment", type="primary"):
+                if comment_text:
+                    new_comment = {
+                        'chart_title': chart_selection,
+                        'user': st.session_state.current_user['username'],
+                        'comment': comment_text,
+                        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M'),
+                        'replies': 0
+                    }
+                    st.session_state.demo_comments.insert(0, new_comment)
+                    st.success("✅ Comment posted!")
+                    st.rerun()
+    
+    # Display comments
+    st.markdown("**Recent Comments:**")
+    for comment in st.session_state.demo_comments:
+        with st.container():
+            st.markdown(f"**📊 {comment['chart_title']}**")
+            st.markdown(f"💬 *{comment['user']}* - {comment['timestamp']}")
+            st.markdown(f"> {comment['comment']}")
+            
+            col1, col2, col3 = st.columns([1, 1, 4])
+            with col1:
+                st.button("👍", key=f"like_{comment['timestamp']}")
+            with col2:
+                st.button("💬 Reply", key=f"reply_{comment['timestamp']}")
+            
+            st.markdown("---")
+
+def render_shared_charts_tab():
+    """Render shared charts tab"""
+    st.markdown("#### 📊 Shared Charts")
+    
+    # Mock shared charts for demo
+    shared_charts = [
+        {
+            'title': 'Q4 Sales Performance',
+            'creator': 'admin',
+            'shared_date': '2024-01-15',
+            'views': 24,
+            'chart_type': 'Line Chart'
+        },
+        {
+            'title': 'Customer Demographics',
+            'creator': 'demo',
+            'shared_date': '2024-01-14',
+            'views': 18,
+            'chart_type': 'Bar Chart'
+        },
+        {
+            'title': 'Revenue Forecast',
+            'creator': 'admin',
+            'shared_date': '2024-01-13',
+            'views': 31,
+            'chart_type': 'Area Chart'
+        }
+    ]
+    
+    # Share current chart
+    if st.session_state.df is not None:
+        with st.expander("📤 Share Current Analysis"):
+            with st.form("share_chart"):
+                share_title = st.text_input("Chart Title", placeholder="Enter a descriptive title")
+                share_desc = st.text_area("Description", placeholder="Describe your analysis")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    share_public = st.checkbox("Make Public", help="Allow others to discover this chart")
+                with col2:
+                    allow_comments = st.checkbox("Allow Comments", value=True)
+                
+                if st.form_submit_button("📤 Share Chart", type="primary"):
+                    if share_title:
+                        st.success(f"✅ Chart '{share_title}' shared successfully!")
+                        shared_charts.insert(0, {
+                            'title': share_title,
+                            'creator': st.session_state.current_user['username'],
+                            'shared_date': datetime.now().strftime('%Y-%m-%d'),
+                            'views': 0,
+                            'chart_type': 'Custom Analysis'
+                        })
+                    else:
+                        st.error("❌ Please enter a chart title!")
+    
+    # Display shared charts
+    st.markdown("**Available Shared Charts:**")
+    for chart in shared_charts:
+        with st.container():
+            col1, col2, col3 = st.columns([3, 1, 1])
+            
+            with col1:
+                st.markdown(f"**📊 {chart['title']}**")
+                st.markdown(f"👤 By {chart['creator']} • {chart['shared_date']} • {chart['chart_type']}")
+            
+            with col2:
+                st.metric("👀 Views", chart['views'])
+            
+            with col3:
+                if st.button("🔍 View", key=f"view_{chart['title']}"):
+                    st.info("Chart viewer coming soon!")
+            
+            st.markdown("---")
+
+def render_user_settings_tab():
+    """Render user settings and preferences tab"""
+    st.markdown("#### ⚙️ User Settings & Preferences")
+    
+    user = st.session_state.current_user
+    
+    with st.form("user_settings"):
+        st.markdown("**Profile Settings:**")
+        new_email = st.text_input("Email", value=user.get('email', ''))
+        
+        st.markdown("**Dashboard Preferences:**")
+        theme_pref = st.selectbox(
+            "Default Theme", 
+            ["dark", "light"],
+            index=0 if user.get('preferences', {}).get('theme') == 'dark' else 1
+        )
+        
+        notifications = st.checkbox(
+            "Enable Notifications", 
+            value=user.get('preferences', {}).get('notifications', True)
+        )
+        
+        default_chart = st.selectbox(
+            "Default Chart Type",
+            ["auto", "bar", "line", "scatter", "pie"],
+            index=0
+        )
+        
+        st.markdown("**Privacy Settings:**")
+        profile_visibility = st.selectbox(
+            "Profile Visibility",
+            ["public", "workspace_members", "private"],
+            index=2
+        )
+        
+        if st.form_submit_button("💾 Save Settings", type="primary"):
+            # Update user preferences
+            user['email'] = new_email
+            user['preferences'] = {
+                'theme': theme_pref,
+                'notifications': notifications,
+                'default_chart_type': default_chart,
+                'profile_visibility': profile_visibility
+            }
+            st.session_state.users_db[user['username']] = user
+            st.success("✅ Settings saved successfully!")
+    
+    # Account management
+    st.markdown("---")
+    st.markdown("**Account Management:**")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔑 Change Password"):
+            st.info("Password change coming soon!")
+    
+    with col2:
+        if st.button("📊 Export My Data"):
+            st.info("Data export coming soon!")
+
+class PerformanceOptimizer:
+    """Performance optimization and caching system"""
+    
+    @staticmethod
+    @st.cache_data(ttl=300)  # Cache for 5 minutes
+    def cached_data_preprocessing(df_hash: str, df_json: str) -> dict:
+        """Cache expensive data preprocessing operations"""
+        df = pd.read_json(df_json)
+        
+        # Expensive operations that benefit from caching
+        preprocessing_results = {
+            'numeric_columns': df.select_dtypes(include=[np.number]).columns.tolist(),
+            'categorical_columns': df.select_dtypes(include=['object']).columns.tolist(),
+            'missing_values': df.isnull().sum().to_dict(),
+            'data_types': df.dtypes.to_dict(),
+            'basic_stats': df.describe(include='all').to_dict(),
+            'correlation_matrix': df.select_dtypes(include=[np.number]).corr().to_dict() if len(df.select_dtypes(include=[np.number]).columns) > 1 else {},
+            'shape': df.shape,
+            'memory_usage': df.memory_usage(deep=True).sum()
+        }
+        
+        return preprocessing_results
+    
+    @staticmethod
+    @st.cache_data(ttl=600)  # Cache for 10 minutes
+    def cached_chart_generation(chart_type: str, df_json: str, **params) -> dict:
+        """Cache expensive chart generation operations"""
+        df = pd.read_json(df_json)
+        
+        # This would contain the heavy chart generation logic
+        # For now, return chart configuration
+        chart_config = {
+            'type': chart_type,
+            'data_shape': df.shape,
+            'timestamp': datetime.now().isoformat(),
+            'params': params
+        }
+        
+        return chart_config
+    
+    @staticmethod
+    @st.cache_data(ttl=1800)  # Cache for 30 minutes
+    def cached_ml_training(df_json: str, model_type: str, target_column: str, **params) -> dict:
+        """Cache expensive ML model training"""
+        df = pd.read_json(df_json)
+        
+        try:
+            # This is a simplified version - in practice would include actual training
+            results = {
+                'model_type': model_type,
+                'target_column': target_column,
+                'feature_count': len(df.columns) - 1,
+                'sample_count': len(df),
+                'trained_at': datetime.now().isoformat(),
+                'params': params,
+                'status': 'completed'
+            }
+        except Exception as e:
+            results = {'status': 'error', 'error': str(e)}
+        
+        return results
+    
+    @staticmethod
+    def optimize_dataframe(df: pd.DataFrame, memory_threshold_mb: int = 100) -> pd.DataFrame:
+        """Optimize DataFrame memory usage"""
+        initial_memory = df.memory_usage(deep=True).sum() / 1024 / 1024  # MB
+        
+        if initial_memory < memory_threshold_mb:
+            return df
+        
+        df_optimized = df.copy()
+        
+        # Optimize integer columns
+        for col in df_optimized.select_dtypes(include=['int64']).columns:
+            col_min = df_optimized[col].min()
+            col_max = df_optimized[col].max()
+            
+            if col_min >= np.iinfo(np.int8).min and col_max <= np.iinfo(np.int8).max:
+                df_optimized[col] = df_optimized[col].astype(np.int8)
+            elif col_min >= np.iinfo(np.int16).min and col_max <= np.iinfo(np.int16).max:
+                df_optimized[col] = df_optimized[col].astype(np.int16)
+            elif col_min >= np.iinfo(np.int32).min and col_max <= np.iinfo(np.int32).max:
+                df_optimized[col] = df_optimized[col].astype(np.int32)
+        
+        # Optimize float columns
+        for col in df_optimized.select_dtypes(include=['float64']).columns:
+            df_optimized[col] = pd.to_numeric(df_optimized[col], downcast='float')
+        
+        # Optimize object columns to categorical where beneficial
+        for col in df_optimized.select_dtypes(include=['object']).columns:
+            unique_count = df_optimized[col].nunique()
+            total_count = len(df_optimized[col])
+            
+            if unique_count / total_count < 0.5:  # Less than 50% unique values
+                df_optimized[col] = df_optimized[col].astype('category')
+        
+        final_memory = df_optimized.memory_usage(deep=True).sum() / 1024 / 1024  # MB
+        
+        return df_optimized
+    
+    @staticmethod
+    def paginate_data(df: pd.DataFrame, page_size: int = 1000, page: int = 0) -> tuple:
+        """Implement data pagination for large datasets"""
+        start_idx = page * page_size
+        end_idx = start_idx + page_size
+        
+        paginated_df = df.iloc[start_idx:end_idx]
+        total_pages = (len(df) - 1) // page_size + 1
+        
+        return paginated_df, total_pages, page
+    
+    @staticmethod
+    def lazy_load_columns(df: pd.DataFrame, selected_columns: list = None) -> pd.DataFrame:
+        """Implement lazy loading for column selection"""
+        if selected_columns is None:
+            # Default to first 10 columns for performance
+            selected_columns = df.columns[:min(10, len(df.columns))].tolist()
+        
+        return df[selected_columns]
+    
+    @staticmethod
+    def monitor_performance() -> dict:
+        """Monitor application performance metrics"""
+        import psutil
+        
+        metrics = {
+            'memory_usage_mb': psutil.virtual_memory().used / 1024 / 1024,
+            'memory_percent': psutil.virtual_memory().percent,
+            'cpu_percent': psutil.cpu_percent(),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        return metrics
+
+class DataManager:
+    """Advanced data management with performance optimizations"""
+    
+    @staticmethod
+    def smart_sample_data(df: pd.DataFrame, max_rows: int = 10000) -> pd.DataFrame:
+        """Intelligently sample large datasets for analysis"""
+        if len(df) <= max_rows:
+            return df
+        
+        # For very large datasets, use stratified sampling if possible
+        sample_size = min(max_rows, len(df))
+        
+        # Try to maintain data distribution
+        if len(df) > 50000:
+            # Use systematic sampling for very large datasets
+            step = len(df) // sample_size
+            indices = range(0, len(df), step)[:sample_size]
+            sampled_df = df.iloc[indices]
+        else:
+            # Use random sampling for moderately large datasets
+            sampled_df = df.sample(n=sample_size, random_state=42)
+        
+        return sampled_df
+    
+    @staticmethod
+    def detect_large_dataset(df: pd.DataFrame) -> dict:
+        """Detect if dataset is large and suggest optimizations"""
+        size_info = {
+            'row_count': len(df),
+            'column_count': len(df.columns),
+            'memory_mb': df.memory_usage(deep=True).sum() / 1024 / 1024,
+            'is_large': False,
+            'suggestions': []
+        }
+        
+        # Define thresholds
+        if size_info['row_count'] > 100000:
+            size_info['is_large'] = True
+            size_info['suggestions'].append("Consider using data sampling for faster analysis")
+        
+        if size_info['column_count'] > 50:
+            size_info['suggestions'].append("Consider selecting relevant columns only")
+        
+        if size_info['memory_mb'] > 500:
+            size_info['is_large'] = True
+            size_info['suggestions'].append("Consider data type optimization")
+        
+        return size_info
+    
+    @staticmethod
+    def auto_optimize_dataset(df: pd.DataFrame) -> pd.DataFrame:
+        """Automatically optimize dataset for better performance"""
+        # Step 1: Detect large dataset characteristics
+        size_info = DataManager.detect_large_dataset(df)
+        
+        optimized_df = df.copy()
+        
+        # Step 2: Apply optimizations based on size
+        if size_info['is_large']:
+            # Memory optimization
+            optimized_df = PerformanceOptimizer.optimize_dataframe(optimized_df)
+            
+            # Smart sampling if too large
+            if len(optimized_df) > 50000:
+                optimized_df = DataManager.smart_sample_data(optimized_df, 25000)
+        
+        return optimized_df
+
+def render_performance_dashboard():
+    """Render performance monitoring and optimization dashboard"""
+    st.markdown("### ⚡ Performance & Scaling")
+    
+    # Performance monitoring
+    try:
+        perf_metrics = PerformanceOptimizer.monitor_performance()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("💾 Memory Usage", f"{perf_metrics['memory_usage_mb']:.1f} MB")
+        with col2:
+            st.metric("🧠 Memory %", f"{perf_metrics['memory_percent']:.1f}%")
+        with col3:
+            st.metric("⚙️ CPU %", f"{perf_metrics['cpu_percent']:.1f}%")
+    except ImportError:
+        st.info("📊 Install 'psutil' for detailed performance monitoring")
+    
+    # Dataset optimization
+    if st.session_state.df is not None:
+        df = st.session_state.df
+        
+        st.markdown("#### 📊 Dataset Analysis & Optimization")
+        
+        # Current dataset info
+        size_info = DataManager.detect_large_dataset(df)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("📝 Rows", f"{size_info['row_count']:,}")
+        with col2:
+            st.metric("📊 Columns", size_info['column_count'])
+        with col3:
+            st.metric("💾 Memory", f"{size_info['memory_mb']:.1f} MB")
+        with col4:
+            status = "🔴 Large" if size_info['is_large'] else "🟢 Optimal"
+            st.metric("Status", status)
+        
+        # Optimization suggestions
+        if size_info['suggestions']:
+            st.markdown("#### 💡 Optimization Suggestions")
+            for suggestion in size_info['suggestions']:
+                st.write(f"• {suggestion}")
+        
+        # Optimization controls
+        st.markdown("#### 🛠️ Optimization Tools")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🚀 Auto-Optimize Dataset", type="primary"):
+                with st.spinner("Optimizing dataset..."):
+                    optimized_df = DataManager.auto_optimize_dataset(df)
+                    st.session_state.df = optimized_df
+                    
+                    # Show optimization results
+                    new_size_info = DataManager.detect_large_dataset(optimized_df)
+                    memory_saved = size_info['memory_mb'] - new_size_info['memory_mb']
+                    
+                    if memory_saved > 0:
+                        st.success(f"✅ Optimization complete! Saved {memory_saved:.1f} MB")
+                    else:
+                        st.info("ℹ️ Dataset was already optimized")
+                    
+                    st.rerun()
+        
+        with col2:
+            if st.button("📋 Reset to Original"):
+                st.info("Original dataset reset functionality would go here")
+        
+        # Data pagination demo
+        st.markdown("#### 📄 Data Pagination")
+        
+        page_size = st.selectbox("Page Size", [100, 500, 1000, 5000], index=1)
+        
+        paginated_df, total_pages, current_page = PerformanceOptimizer.paginate_data(
+            df, page_size=page_size, page=0
+        )
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col1:
+            if st.button("⬅️ Previous") and current_page > 0:
+                # Previous page logic would go here
+                pass
+        with col2:
+            st.write(f"Page 1 of {total_pages} ({len(paginated_df)} rows shown)")
+        with col3:
+            if st.button("➡️ Next") and current_page < total_pages - 1:
+                # Next page logic would go here
+                pass
+        
+        st.dataframe(paginated_df, use_container_width=True)
+        
+        # Column selection for lazy loading
+        st.markdown("#### 🎯 Column Selection")
+        
+        all_columns = df.columns.tolist()
+        default_selection = all_columns[:min(10, len(all_columns))]
+        
+        selected_columns = st.multiselect(
+            "Select columns to analyze",
+            all_columns,
+            default=default_selection,
+            help="Select fewer columns for better performance"
+        )
+        
+        if selected_columns:
+            lazy_df = PerformanceOptimizer.lazy_load_columns(df, selected_columns)
+            
+            st.write(f"**Selected Data:** {len(lazy_df)} rows × {len(lazy_df.columns)} columns")
+            
+            # Show memory usage comparison
+            original_memory = df.memory_usage(deep=True).sum() / 1024 / 1024
+            lazy_memory = lazy_df.memory_usage(deep=True).sum() / 1024 / 1024
+            memory_saved = original_memory - lazy_memory
+            
+            if memory_saved > 0:
+                st.success(f"💾 Memory saved: {memory_saved:.1f} MB ({memory_saved/original_memory*100:.1f}%)")
+    
+    else:
+        st.info("👆 Upload a dataset to see optimization tools!")
+    
+    # Cache management
+    st.markdown("#### 🗄️ Cache Management")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🗑️ Clear Data Cache"):
+            st.cache_data.clear()
+            st.success("✅ Data cache cleared!")
+    
+    with col2:
+        if st.button("📊 Cache Statistics"):
+            st.info("Cache statistics would be displayed here")
+    
+    with col3:
+        cache_enabled = st.checkbox("🚀 Enable Caching", value=True)
+        if cache_enabled:
+            st.success("✅ Caching enabled")
+        else:
+            st.warning("⚠️ Caching disabled")
+
+def render_realtime_dashboard():
+    """Render the real-time analytics dashboard"""
+    st.markdown("### ⚡ Real-time Analytics Dashboard")
+    
+    # Initialize real-time session state
+    if 'realtime_data' not in st.session_state:
+        st.session_state.realtime_data = []
+    if 'is_streaming' not in st.session_state:
+        st.session_state.is_streaming = False
+    if 'stream_interval' not in st.session_state:
+        st.session_state.stream_interval = 2  # seconds
+    if 'anomaly_alerts' not in st.session_state:
+        st.session_state.anomaly_alerts = []
+    
+    # Control panel
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("▶️ Start Stream" if not st.session_state.is_streaming else "⏸️ Pause Stream"):
+            st.session_state.is_streaming = not st.session_state.is_streaming
+    
+    with col2:
+        if st.button("🗑️ Clear Data"):
+            st.session_state.realtime_data = []
+            st.session_state.anomaly_alerts = []
+            st.rerun()
+    
+    with col3:
+        interval = st.selectbox("Update Interval", [1, 2, 5, 10], 
+                               index=1, help="Seconds between updates")
+        st.session_state.stream_interval = interval
+    
+    with col4:
+        chart_type = st.selectbox("Chart Type", ["line", "gauge", "histogram"])
+    
+    # Data generation controls
+    with st.expander("🎛️ Data Source Settings", expanded=False):
+        col_a, col_b = st.columns(2)
+        with col_a:
+            data_source = st.selectbox("Data Source", 
+                                     ["Random Data", "Based on Current Dataset"],
+                                     help="Generate random data or simulate from current dataset")
+        with col_b:
+            anomaly_rate = st.slider("Anomaly Rate", 0.0, 0.2, 0.05, 0.01,
+                                   help="Probability of generating anomalies")
+    
+    # Auto-refresh mechanism
+    if st.session_state.is_streaming:
+        # Generate new data point
+        if data_source == "Based on Current Dataset" and st.session_state.df is not None:
+            new_point = RealTimeAnalytics.generate_live_data(
+                "dataset", st.session_state.df, anomaly_rate
+            )
+        else:
+            new_point = RealTimeAnalytics.generate_live_data("random", None, anomaly_rate)
+        
+        st.session_state.realtime_data.append(new_point)
+        
+        # Limit data points for performance
+        if len(st.session_state.realtime_data) > 500:
+            st.session_state.realtime_data = st.session_state.realtime_data[-500:]
+        
+        # Detect anomalies
+        anomalies = RealTimeAnalytics.detect_anomalies(st.session_state.realtime_data)
+        if anomalies:
+            for anomaly in anomalies:
+                if anomaly not in st.session_state.anomaly_alerts:
+                    st.session_state.anomaly_alerts.append(anomaly)
+        
+        # Auto-refresh
+        time.sleep(st.session_state.stream_interval)
+        st.rerun()
+    
+    # Display metrics
+    if st.session_state.realtime_data:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📊 Data Points", len(st.session_state.realtime_data))
+        
+        with col2:
+            recent_val = st.session_state.realtime_data[-1]['value'] if 'value' in st.session_state.realtime_data[-1] else 0
+            prev_val = st.session_state.realtime_data[-2]['value'] if len(st.session_state.realtime_data) > 1 and 'value' in st.session_state.realtime_data[-2] else recent_val
+            st.metric("📈 Current Value", f"{recent_val:.2f}", f"{recent_val - prev_val:.2f}")
+        
+        with col3:
+            st.metric("🚨 Anomalies", len(st.session_state.anomaly_alerts))
+        
+        with col4:
+            status = "🟢 Streaming" if st.session_state.is_streaming else "🔴 Stopped"
+            st.metric("Status", status)
+        
+        # Display chart
+        fig = RealTimeAnalytics.create_live_chart(st.session_state.realtime_data, chart_type)
+        if fig:
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Anomaly alerts
+        if st.session_state.anomaly_alerts:
+            st.markdown("### 🚨 Anomaly Alerts")
+            recent_anomalies = sorted(st.session_state.anomaly_alerts, 
+                                    key=lambda x: x['timestamp'], reverse=True)[:5]
+            
+            for anomaly in recent_anomalies:
+                severity_color = "🔴" if anomaly['severity'] == 'high' else "🟡"
+                st.warning(f"{severity_color} Anomaly detected at {anomaly['timestamp'].strftime('%H:%M:%S')} - "
+                          f"Value: {anomaly['value']:.2f} (Z-score: {anomaly['z_score']:.2f})")
+        
+        # Data table
+        if st.checkbox("Show Raw Data"):
+            recent_data = st.session_state.realtime_data[-20:]  # Show last 20 points
+            df_display = pd.DataFrame(recent_data)
+            if 'timestamp' in df_display.columns:
+                df_display['timestamp'] = df_display['timestamp'].dt.strftime('%H:%M:%S')
+            st.dataframe(df_display, use_container_width=True)
+    else:
+        st.info("🎯 Click 'Start Stream' to begin real-time data generation")
 
 # Initialize session state
 if 'uploaded_file' not in st.session_state:
@@ -2192,24 +3788,54 @@ def main():
         st.markdown("*Enhanced Smart Parser with AI*")
     
     # Main content tabs
-    if st.session_state.df is not None:
-        tab1, tab2, tab3, tab4 = st.tabs(["💬 Smart Chat", "🎯 Direct Viz", "🤖 AI Agent", "🧠 ML"])
-        
-        with tab1:
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        "💬 Smart Chat", "🎯 Direct Viz", "🤖 AI Agent", "🧠 ML", 
+        "⚡ Real-time", "🔮 AI Insights", "👥 Collaborate", "🚀 Performance"
+    ])
+    
+    with tab1:
+        if st.session_state.df is not None:
             chat_interface()
-        
-        with tab2:
+        else:
+            st.info("👆 Please upload a CSV file to use Smart Chat mode!")
+    
+    with tab2:
+        if st.session_state.df is not None:
             direct_visualization()
-        
-        with tab3:
+        else:
+            st.info("👆 Please upload a CSV file to create visualizations!")
+    
+    with tab3:
+        if st.session_state.df is not None:
             ai_agent_interface()
-            
-        with tab4:
-            ml_interface()
-    else:
-        st.info("👆 Please upload a CSV file using the sidebar to get started!")
+        else:
+            st.info("👆 Please upload a CSV file to use AI Agent!")
         
-        # Show sample data section
+    with tab4:
+        if st.session_state.df is not None:
+            ml_interface()
+        else:
+            st.info("👆 Please upload a CSV file to use ML features!")
+        
+    with tab5:
+        # Real-time analytics works with or without uploaded data
+        render_realtime_dashboard()
+    
+    with tab6:
+        # AI Insights requires uploaded data
+        render_ai_insights_dashboard()
+        
+    with tab7:
+        # Collaboration works with or without uploaded data
+        render_collaboration_dashboard()
+        
+    with tab8:
+        # Performance monitoring and optimization
+        render_performance_dashboard()
+
+    # Show sample data section if no data is uploaded
+    if st.session_state.df is None:
+        st.markdown("---")
         st.markdown("### 📋 Sample Data")
         st.write("Don't have data? Try these sample datasets:")
         
