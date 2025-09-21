@@ -20,6 +20,24 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import classification_report, mean_squared_error, r2_score, silhouette_score, confusion_matrix
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import warnings
+from datetime import datetime
+import uuid
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+import tempfile
+import os
+try:
+    from sqlalchemy import create_engine, text
+    import psycopg2
+    import pymongo
+    import redis
+    DATABASE_SUPPORT = True
+except ImportError:
+    DATABASE_SUPPORT = False
+    st.warning("⚠️ Database connectors not available. Install psycopg2-binary, pymongo, redis, sqlalchemy for database support.")
 warnings.filterwarnings('ignore')
 
 # Configuration - For Streamlit Cloud (frontend-only mode)
@@ -36,73 +54,540 @@ st.set_page_config(
 
 # Cache expensive functions
 @st.cache_data
-def load_css():
-    """Cache CSS to avoid reloading"""
-    return """
+def load_css(theme="light"):
+    """Enhanced CSS with dark/light theme support"""
+    if theme == "dark":
+        return """
 <style>
+/* Dark Theme */
+.stApp {
+    background-color: #0e1117;
+    color: #fafafa;
+}
 .main-header {
-    font-size: 2.5rem;
-    color: #1f77b4;
+    font-size: 2.8rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
     text-align: center;
     margin-bottom: 2rem;
+    font-weight: 700;
 }
 .chat-message {
-    padding: 1rem;
-    margin: 0.5rem 0;
-    border-radius: 10px;
-    border-left: 4px solid #1f77b4;
-    background-color: #f0f8ff;
+    padding: 1.2rem;
+    margin: 0.7rem 0;
+    border-radius: 12px;
+    border-left: 4px solid #667eea;
+    background: linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
 }
 .viz-container {
-    background-color: #ffffff;
-    padding: 1.5rem;
-    border-radius: 10px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin: 1rem 0;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    padding: 2rem;
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    border: 1px solid #333;
+    margin: 1.5rem 0;
 }
 .metric-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
-    padding: 1rem;
-    border-radius: 10px;
-    margin: 0.5rem;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin: 0.7rem;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+    transform: translateY(0px);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 24px rgba(102, 126, 234, 0.4);
 }
 .error-message {
-    background-color: #ffe6e6;
-    border-left: 4px solid #ff4444;
+    background: linear-gradient(135deg, #2d1b69 0%, #11998e 100%);
+    color: #ff6b6b;
+    border-left: 4px solid #ff4757;
     padding: 1rem;
-    border-radius: 5px;
+    border-radius: 8px;
     margin: 1rem 0;
 }
-.template-button {
-    width: 100%;
-    margin: 0.25rem 0;
+.success-message {
+    background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+    color: #2d3436;
+    border-left: 4px solid #00b894;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+}
+.sidebar .sidebar-content {
+    background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
+}
+.stSelectbox > div > div {
+    background-color: #2d2d44;
+    color: #fafafa;
+    border: 1px solid #667eea;
+}
+.stButton > button {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+}
+</style>
+"""
+    else:  # Light theme
+        return """
+<style>
+/* Light Theme */
+.stApp {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background-attachment: fixed;
+}
+.main-header {
+    font-size: 2.8rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-align: center;
+    margin-bottom: 2rem;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.chat-message {
+    padding: 1.2rem;
+    margin: 0.7rem 0;
+    border-radius: 12px;
+    border-left: 4px solid #667eea;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+.viz-container {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 2rem;
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    margin: 1.5rem 0;
+}
+.metric-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin: 0.7rem;
+    box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+    transform: translateY(0px);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 12px 24px rgba(102, 126, 234, 0.4);
+}
+.error-message {
+    background: rgba(255, 230, 230, 0.9);
+    color: #d63031;
+    border-left: 4px solid #ff4757;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    backdrop-filter: blur(10px);
+}
+.success-message {
+    background: rgba(230, 255, 230, 0.9);
+    color: #00b894;
+    border-left: 4px solid #00b894;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 1rem 0;
+    backdrop-filter: blur(10px);
+}
+.stButton > button {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+}
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.1);
     padding: 0.5rem;
-    background-color: #f0f8ff;
-    border: 1px solid #1f77b4;
-    border-radius: 5px;
-    text-align: left;
+    border-radius: 10px;
 }
-.template-button:hover {
-    background-color: #e6f3ff;
+.stTabs [data-baseweb="tab"] {
+    background: rgba(255, 255, 255, 0.8);
+    color: #2d3436;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    transition: all 0.3s ease;
 }
-.query-history-item {
-    background-color: #f8f9fa;
-    padding: 0.5rem;
-    margin: 0.25rem 0;
-    border-radius: 5px;
-    border-left: 3px solid #1f77b4;
-    cursor: pointer;
-}
-.query-history-item:hover {
-    background-color: #e9ecef;
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+    color: white !important;
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
 }
 </style>
 """
 
-# Apply CSS
-st.markdown(load_css(), unsafe_allow_html=True)
+def display_enhanced_chart(fig, title="Visualization", description="", chart_type="unknown"):
+    """Display chart with enhanced styling and container"""
+    st.markdown(f'<div class="viz-container">', unsafe_allow_html=True)
+    
+    if title:
+        st.markdown(f"### 📊 {title}")
+    
+    if description:
+        st.markdown(f"*{description}*")
+    
+    # Display the chart
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Track figure for export
+    figure_data = {
+        'figure': fig,
+        'title': title,
+        'description': description,
+        'type': chart_type,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    # Add to current figures (avoid duplicates)
+    if 'current_figures' not in st.session_state:
+        st.session_state.current_figures = []
+    
+    # Replace if same title exists, otherwise append
+    existing_idx = next((i for i, f in enumerate(st.session_state.current_figures) if f['title'] == title), None)
+    if existing_idx is not None:
+        st.session_state.current_figures[existing_idx] = figure_data
+    else:
+        st.session_state.current_figures.append(figure_data)
+    
+    # Add some analytics info if available
+    if hasattr(fig, 'data') and fig.data:
+        data_points = sum(len(trace.x) if hasattr(trace, 'x') and trace.x is not None else 0 for trace in fig.data)
+        if data_points > 0:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📈 Data Points", f"{data_points:,}")
+            with col2:
+                st.metric("📋 Chart Type", fig.data[0].type.title() if fig.data else "Unknown")
+            with col3:
+                st.metric("🎨 Theme", st.session_state.theme.title())
+    
+    # Quick export options for this chart
+    col1, col2 = st.columns(2)
+    with col1:
+        try:
+            img_bytes = fig.to_image(format="png", width=1200, height=800)
+            st.download_button(
+                label="📥 Download PNG",
+                data=img_bytes,
+                file_name=f"{title.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                mime="image/png",
+                key=f"download_{title}_{len(st.session_state.current_figures)}"
+            )
+        except:
+            st.info("💡 Install `kaleido` for PNG downloads")
+    
+    with col2:
+        if st.button("🔗 Share Chart", key=f"share_{title}_{len(st.session_state.current_figures)}"):
+            try:
+                share_info = ExportManager.generate_share_link({'chart': title})
+                st.success(f"🔗 Share link: `{share_info['id']}`")
+            except Exception as e:
+                st.error(f"Share failed: {str(e)}")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+class ExportManager:
+    """Advanced export and sharing functionality"""
+    
+    @staticmethod
+    def create_pdf_report(figures_data, dataset_info, analysis_summary):
+        """Create a comprehensive PDF report"""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
+        story = []
+        
+        # Custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=colors.HexColor('#667eea')
+        )
+        
+        # Title
+        story.append(Paragraph("Omni-Data Analytics Report", title_style))
+        story.append(Spacer(1, 20))
+        
+        # Report metadata
+        metadata_style = ParagraphStyle('Metadata', parent=styles['Normal'], fontSize=10)
+        story.append(Paragraph(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", metadata_style))
+        story.append(Paragraph(f"Report ID: {str(uuid.uuid4())[:8]}", metadata_style))
+        story.append(Spacer(1, 30))
+        
+        # Dataset Summary
+        story.append(Paragraph("Dataset Overview", styles['Heading2']))
+        if dataset_info:
+            data = [
+                ['Metric', 'Value'],
+                ['Total Rows', f"{dataset_info.get('rows', 'N/A'):,}"],
+                ['Total Columns', f"{dataset_info.get('columns', 'N/A'):,}"],
+                ['Numeric Columns', f"{len(dataset_info.get('numeric_columns', [])):,}"],
+                ['Categorical Columns', f"{len(dataset_info.get('categorical_columns', [])):,}"]
+            ]
+            
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#667eea')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black)
+            ]))
+            story.append(table)
+            story.append(Spacer(1, 20))
+        
+        # Analysis Summary
+        if analysis_summary:
+            story.append(Paragraph("Key Insights", styles['Heading2']))
+            for insight in analysis_summary:
+                story.append(Paragraph(f"• {insight}", styles['Normal']))
+            story.append(Spacer(1, 20))
+        
+        # Charts section
+        story.append(Paragraph("Visualizations", styles['Heading2']))
+        
+        for i, fig_data in enumerate(figures_data):
+            try:
+                # Convert plotly figure to image
+                img_bytes = fig_data['figure'].to_image(format="png", width=600, height=400)
+                
+                # Create temporary file for image
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                    tmp_file.write(img_bytes)
+                    tmp_file_path = tmp_file.name
+                
+                # Add image to PDF
+                img = RLImage(tmp_file_path, width=5*inch, height=3.33*inch)
+                story.append(img)
+                story.append(Spacer(1, 10))
+                
+                # Add caption
+                caption = fig_data.get('title', f'Visualization {i+1}')
+                story.append(Paragraph(f"Figure {i+1}: {caption}", styles['Caption']))
+                story.append(Spacer(1, 20))
+                
+                # Clean up temp file
+                os.unlink(tmp_file_path)
+                
+            except Exception as e:
+                story.append(Paragraph(f"[Chart {i+1} could not be rendered: {str(e)}]", styles['Normal']))
+                story.append(Spacer(1, 20))
+        
+        # Footer
+        story.append(Spacer(1, 30))
+        story.append(Paragraph("Generated by Omni-Data Analytics Platform", metadata_style))
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def create_excel_export(df, figures_data, analysis_summary):
+        """Create comprehensive Excel export with multiple sheets"""
+        buffer = io.BytesIO()
+        
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            # Main data sheet
+            df.to_excel(writer, sheet_name='Raw Data', index=False)
+            
+            # Summary sheet
+            summary_data = {
+                'Metric': ['Total Rows', 'Total Columns', 'Numeric Columns', 'Categorical Columns', 'Missing Values'],
+                'Value': [
+                    len(df),
+                    len(df.columns),
+                    len(df.select_dtypes(include=[np.number]).columns),
+                    len(df.select_dtypes(include=['object']).columns),
+                    df.isnull().sum().sum()
+                ]
+            }
+            
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Dataset Summary', index=False)
+            
+            # Statistical summary for numeric columns
+            if not df.select_dtypes(include=[np.number]).empty:
+                numeric_summary = df.describe()
+                numeric_summary.to_excel(writer, sheet_name='Statistical Summary')
+            
+            # Analysis insights
+            if analysis_summary:
+                insights_df = pd.DataFrame({'Insights': analysis_summary})
+                insights_df.to_excel(writer, sheet_name='Key Insights', index=False)
+            
+            # Chart metadata
+            if figures_data:
+                chart_info = []
+                for i, fig_data in enumerate(figures_data):
+                    chart_info.append({
+                        'Chart Number': i + 1,
+                        'Title': fig_data.get('title', f'Chart {i+1}'),
+                        'Type': fig_data.get('type', 'Unknown'),
+                        'Created': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    })
+                
+                charts_df = pd.DataFrame(chart_info)
+                charts_df.to_excel(writer, sheet_name='Charts Info', index=False)
+        
+        buffer.seek(0)
+        return buffer
+    
+    @staticmethod
+    def generate_share_link(visualization_config):
+        """Generate shareable link configuration"""
+        link_id = str(uuid.uuid4())[:8]
+        
+        # In a real application, this would be stored in a database
+        share_config = {
+            'id': link_id,
+            'config': visualization_config,
+            'created_at': datetime.now().isoformat(),
+            'expires_at': (datetime.now() + pd.Timedelta(days=30)).isoformat()
+        }
+        
+        # For demo purposes, return a mock URL
+        share_url = f"https://omni-data.streamlit.app/shared/{link_id}"
+        
+        return {
+            'url': share_url,
+            'id': link_id,
+            'expires': share_config['expires_at'][:10]  # Date only
+        }
+
+def display_export_options(current_figures, dataset_info=None, insights=None):
+    """Display comprehensive export options"""
+    st.markdown("### 📊 Export & Share Options")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        if st.button("📄 Export PDF Report", help="Generate comprehensive PDF report"):
+            if current_figures:
+                with st.spinner("Generating PDF report..."):
+                    try:
+                        pdf_buffer = ExportManager.create_pdf_report(
+                            current_figures, dataset_info, insights or []
+                        )
+                        
+                        st.download_button(
+                            label="📥 Download PDF Report",
+                            data=pdf_buffer,
+                            file_name=f"omni_data_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                            mime="application/pdf"
+                        )
+                        st.success("✅ PDF report generated successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ PDF generation failed: {str(e)}")
+            else:
+                st.warning("No visualizations to export!")
+    
+    with col2:
+        if st.button("📊 Export Excel", help="Export data and analysis to Excel"):
+            if st.session_state.df is not None:
+                with st.spinner("Generating Excel export..."):
+                    try:
+                        excel_buffer = ExportManager.create_excel_export(
+                            st.session_state.df, current_figures, insights or []
+                        )
+                        
+                        st.download_button(
+                            label="📥 Download Excel File",
+                            data=excel_buffer,
+                            file_name=f"omni_data_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        st.success("✅ Excel export generated successfully!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Excel generation failed: {str(e)}")
+            else:
+                st.warning("No data to export!")
+    
+    with col3:
+        if st.button("🖼️ Export Charts", help="Export individual charts as PNG"):
+            if current_figures:
+                with st.spinner("Exporting charts..."):
+                    try:
+                        for i, fig_data in enumerate(current_figures):
+                            img_bytes = fig_data['figure'].to_image(format="png", width=1200, height=800)
+                            
+                            st.download_button(
+                                label=f"📥 Chart {i+1}: {fig_data.get('title', 'Visualization')}",
+                                data=img_bytes,
+                                file_name=f"chart_{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
+                                mime="image/png",
+                                key=f"chart_download_{i}"
+                            )
+                        
+                        st.success(f"✅ {len(current_figures)} chart(s) ready for download!")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Chart export failed: {str(e)}")
+            else:
+                st.warning("No charts to export!")
+    
+    with col4:
+        if st.button("🔗 Generate Share Link", help="Create shareable dashboard link"):
+            if current_figures:
+                try:
+                    share_info = ExportManager.generate_share_link({
+                        'figures': len(current_figures),
+                        'dataset_rows': len(st.session_state.df) if st.session_state.df is not None else 0
+                    })
+                    
+                    st.success("✅ Share link generated!")
+                    st.code(share_info['url'], language='text')
+                    
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.info(f"🔗 Link ID: `{share_info['id']}`")
+                    with col_b:
+                        st.info(f"📅 Expires: {share_info['expires']}")
+                        
+                except Exception as e:
+                    st.error(f"❌ Share link generation failed: {str(e)}")
+            else:
+                st.warning("No visualizations to share!")
 
 # Initialize session state
 if 'uploaded_file' not in st.session_state:
@@ -117,6 +602,12 @@ if 'current_query' not in st.session_state:
     st.session_state.current_query = ""
 if 'current_visualization' not in st.session_state:
     st.session_state.current_visualization = None
+if 'theme' not in st.session_state:
+    st.session_state.theme = "light"
+if 'current_figures' not in st.session_state:
+    st.session_state.current_figures = []
+if 'dataset_insights' not in st.session_state:
+    st.session_state.dataset_insights = []
 if 'refinement_options' not in st.session_state:
     st.session_state.refinement_options = {
         'trendline': False,
@@ -1626,6 +2117,10 @@ def ml_interface():
 
 def main():
     """Main application"""
+    
+    # Apply CSS theme
+    st.markdown(load_css(st.session_state.theme), unsafe_allow_html=True)
+    
     # Header
     if STANDALONE_MODE:
         st.markdown('<h1 class="main-header">🎯 Omni-Data: Smart Data Visualization Platform</h1>', unsafe_allow_html=True)
@@ -1636,6 +2131,22 @@ def main():
     
     # Sidebar
     with st.sidebar:
+        # Theme Toggle
+        st.markdown("### 🎨 Theme Settings")
+        theme_col1, theme_col2 = st.columns(2)
+        with theme_col1:
+            if st.button("☀️ Light", key="light_theme"):
+                st.session_state.theme = "light"
+                st.rerun()
+        with theme_col2:
+            if st.button("🌙 Dark", key="dark_theme"):
+                st.session_state.theme = "dark"
+                st.rerun()
+        
+        current_theme = "Light Mode" if st.session_state.theme == "light" else "Dark Mode"
+        st.info(f"Current: {current_theme}")
+        st.markdown("---")
+        
         # File upload section
         df = upload_data()
         
@@ -1645,6 +2156,35 @@ def main():
             
             # Query history
             render_query_history()
+            
+            # Export Panel
+            if st.session_state.current_figures:
+                st.markdown("---")
+                st.markdown("### 📊 Export Dashboard")
+                
+                # Quick stats
+                num_charts = len(st.session_state.current_figures)
+                st.metric("📈 Active Charts", num_charts)
+                
+                # Compact export options
+                if st.button("📄 Export All", help="Export comprehensive PDF report"):
+                    dataset_info = {
+                        'rows': len(st.session_state.df),
+                        'columns': len(st.session_state.df.columns),
+                        'numeric_columns': st.session_state.df.select_dtypes(include=[np.number]).columns.tolist(),
+                        'categorical_columns': st.session_state.df.select_dtypes(include=['object']).columns.tolist()
+                    }
+                    
+                    display_export_options(
+                        st.session_state.current_figures, 
+                        dataset_info, 
+                        st.session_state.dataset_insights
+                    )
+                
+                # Clear charts button
+                if st.button("🗑️ Clear Charts", help="Clear all current visualizations"):
+                    st.session_state.current_figures = []
+                    st.rerun()
         
         # Footer
         st.markdown("---")

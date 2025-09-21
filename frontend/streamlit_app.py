@@ -1053,10 +1053,10 @@ def main():
         st.markdown("### 🔄 Interaction Mode")
         interaction_mode = st.radio(
             "Choose your preferred interaction mode:",
-            ["🗣️ Natural Language", "🎛️ Manual Mode", "🧠 Smart Parser"],
+            ["🗣️ Natural Language", "🎛️ Manual Mode", "🧠 Smart Parser", "🤖 ML Mode"],
             index=0,
             key="interaction_mode_radio",
-            help="Natural Language: AI-powered query processing\nManual Mode: Use UI controls to build visualizations\nSmart Parser: Fast rule-based text parsing (no AI)"
+            help="Natural Language: AI-powered query processing\nManual Mode: Use UI controls to build visualizations\nSmart Parser: Fast rule-based text parsing (no AI)\nML Mode: Automated machine learning and predictive analysis"
         )
         st.markdown('</div>', unsafe_allow_html=True)
         
